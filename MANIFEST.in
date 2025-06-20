@@ -1,0 +1,15 @@
+include CMakeLists.txt
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include src *.cpp *.h *.hpp
+recursive-include extern *
+recursive-exclude extern .git
+recursive-exclude extern build
+recursive-exclude extern dist
+recursive-exclude extern __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude .DS_Store
+global-exclude .gitignore
+global-exclude .gitmodules

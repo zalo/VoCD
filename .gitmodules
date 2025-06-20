@@ -1,0 +1,12 @@
+[submodule "extern/nanobind"]
+	path = extern/nanobind
+	url = https://github.com/wjakob/nanobind
+[submodule "extern/CDT"]
+	path = extern/CDT
+	url = https://github.com/MarcoAttene/CDT
+[submodule "extern/manifold"]
+	path = extern/manifold
+	url = https://github.com/elalish/manifold
+[submodule "extern/voro"]
+	path = extern/voro
+	url = https://github.com/chr1shr/voro
