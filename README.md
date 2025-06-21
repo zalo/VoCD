@@ -1,6 +1,14 @@
-# Nanobind Template Project
+# Voronoi Convex Decomposition
 
-A template CMake project that demonstrates how to create Python bindings using nanobind with multiple computational geometry libraries.
+A library for computing the convex decomposition of meshes via Constrained Delaunay Tetrahedralization and Voronoi Diagrams. (WIP)
+
+# Algorithm
+
+1. Tetrahedralize the Mesh via CDT
+2. Find all the tetrahedra adjacent to reflex edges (edges which have a concave angle)
+3. Place a Voronoi Cell in the circumcenter of each of these tetrahedra (with the radius set to the circumradius)
+4. Compute the voronoi cells and intersect them with the original mesh via manifold
+5. Fin!
 
 ## Dependencies
 
@@ -20,8 +28,8 @@ pip install vocd
 ### From source
 ```bash
 # Clone with submodules
-git clone --recursive <your-repo-url>
-cd nanobind-template-project
+git clone --recursive git@github.com:zalo/VoCD.git
+cd VoCD
 
 # Install with pip
 pip install .
@@ -41,25 +49,4 @@ cibuildwheel --platform auto
 # Or use GitHub Actions (see .github/workflows/wheels.yml)
 ```
 
-## Usage
-
-```python
-import vocd
-
-# 2D triangulation
-import numpy as np
-points = np.random.rand(10, 2)
-triangles = vocd.triangulate_2d(points)
-
-# Create a cube using Manifold
-cube = vocd.create_cube(2.0, 3.0, 4.0)
-
-# Compute 3D Voronoi cell volumes
-points_3d = np.random.rand(20, 3) * 10
-bounds = [0, 10, 0, 10, 0, 10]
-volumes = vocd.voronoi_3d(points_3d, bounds)
-```
-
-## Development
-
-To add more bindings, edit `src/bindings.cpp` and rebuild the project.
+## Usage (TODO)
