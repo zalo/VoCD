@@ -54,6 +54,7 @@ endif()
 
 # Configure Manifold
 set(MANIFOLD_BUILD_SHARED  OFF    CACHE INTERNAL "")
+set(BUILD_SHARED_LIBS      OFF    CACHE BOOL "" FORCE)
 set(MANIFOLD_PAR           "NONE" CACHE INTERNAL "")
 set(MANIFOLD_BUILD_TEST    OFF    CACHE INTERNAL "")
 set(MANIFOLD_BUILD_SAMPLES OFF    CACHE INTERNAL "")
@@ -82,8 +83,3 @@ target_compile_definitions(vocd_ext PRIVATE VERSION_INFO=${PROJECT_VERSION})
 
 # Install the Python module
 install(TARGETS vocd_ext LIBRARY DESTINATION vocd)
-
-# Package the manifold.dll into the pyd
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  install(FILES $<TARGET_FILE:manifold> DESTINATION vocd)
-endif()
