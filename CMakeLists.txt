@@ -53,10 +53,10 @@ else()
 endif()
 
 # Configure Manifold
-set(MANIFOLD_BUILD_SHARED OFF CACHE INTERNAL "")
-set(MANIFOLD_PAR "NONE" CACHE INTERNAL "")
-set(MANIFOLD_BUILD_TEST OFF CACHE INTERNAL "")
-set(MANIFOLD_BUILD_SAMPLES OFF CACHE INTERNAL "")
+set(MANIFOLD_BUILD_SHARED  OFF    CACHE INTERNAL "")
+set(MANIFOLD_PAR           "NONE" CACHE INTERNAL "")
+set(MANIFOLD_BUILD_TEST    OFF    CACHE INTERNAL "")
+set(MANIFOLD_BUILD_SAMPLES OFF    CACHE INTERNAL "")
 add_subdirectory(extern/manifold)
 
 # Configure Voro++
@@ -68,7 +68,7 @@ set(BUILD_SHARED_LIBS OFF)
 add_subdirectory(extern/voro)
 
 # Create the Python module
-nanobind_add_module(vocd_ext STABLE_ABI src/vocd_ext.cpp)
+nanobind_add_module(vocd_ext STABLE_ABI LTO src/vocd_ext.cpp)
 
 # Link libraries
 target_link_libraries(vocd_ext PRIVATE 
@@ -82,3 +82,8 @@ target_compile_definitions(vocd_ext PRIVATE VERSION_INFO=${PROJECT_VERSION})
 
 # Install the Python module
 install(TARGETS vocd_ext LIBRARY DESTINATION vocd)
+
+# Package the manifold.dll into the pyd
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  install(FILES $<TARGET_FILE:manifold> DESTINATION vocd)
+endif()

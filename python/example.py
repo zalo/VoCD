@@ -6,18 +6,20 @@ Example usage of the vocd module
 import numpy as np
 import vocd
 
-def test_triangulation():
-    """Test 2D Delaunay triangulation"""
-    print("Testing 2D Triangulation...")
-    
-    # Create some random 2D points
-    points = np.random.rand(10, 2)
+def test_tetrahedrization():
+    """Test 3D Delaunay tetrahedrization"""
+    print("Testing 3D tetrahedrization...")
+
+    verts, tris = vocd.create_cube(2.0, 3.0, 4.0)
+
+    verts = np.array(verts, dtype=np.float64).reshape(-1, 3)
+    tris  = np.array( tris, dtype=np. uint32).reshape(-1, 3)
     
     # Triangulate
-    triangles = vocd.tetrahedrize(points)
+    triangles = vocd.tetrahedrize(verts, tris)
     
-    print(f"Generated {len(triangles)} triangles from {len(points)} points")
-    print(f"First triangle indices: {triangles[0]}")
+    print(f"From {verts.shape} points")
+    print(f"Tets: {triangles}")
     print()
 
 def test_manifold():
@@ -25,10 +27,11 @@ def test_manifold():
     print("Testing Manifold...")
     
     # Create a cube
-    cube = vocd.create_cube(2.0, 3.0, 4.0)
+    cube_verts, cube_tris = vocd.create_cube(2.0, 3.0, 4.0)
     
     print(f"Created cube with dimensions 2x3x4")
-    print(f"Cube object: {cube}")
+    print(f"Cube verts: {cube_verts}")
+    print(f"Cube verts: {cube_tris}")
     print()
 
 def test_voronoi():
@@ -37,22 +40,25 @@ def test_voronoi():
     
     # Create some random 3D points
     points = np.random.rand(20, 3) * 10
+    wts = np.random.rand(20)
     
     # Define bounds
-    bounds = [0, 10, 0, 10, 0, 10]  # [x_min, x_max, y_min, y_max, z_min, z_max]
+    bounds = np.array([0, 10, 0, 10, 0, 10], dtype=np.float64)  # [x_min, x_max, y_min, y_max, z_min, z_max]
     
     # Compute Voronoi cell volumes
-    volumes = vocd.voronoi_3d(points, bounds)
+    cells = vocd.voronoi_3d(points, wts, bounds)
     
-    print(f"Computed {len(volumes)} Voronoi cell volumes")
-    print(f"Average volume: {np.mean(volumes):.4f}")
-    print(f"Min volume: {np.min(volumes):.4f}, Max volume: {np.max(volumes):.4f}")
+    print(f"Computed Voronoi cells for {points.shape} points")
+    print(f"Voronoi cell hull vertices: {cells}")
+    #print(f"Computed {len(volumes)} Voronoi cell volumes")
+    #print(f"Average volume: {np.mean(volumes):.4f}")
+    #print(f"Min volume: {np.min(volumes):.4f}, Max volume: {np.max(volumes):.4f}")
     print()
 
 if __name__ == "__main__":
     print(f"Geometry Tools version: {vocd.__version__}")
     print()
     
-    #est_triangulation()
+    test_tetrahedrization()
     test_manifold()
-    #test_voronoi()
+    test_voronoi()

@@ -1,4 +1,5 @@
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/tuple.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/array.h>
@@ -18,7 +19,7 @@ NB_MODULE(vocd_ext, m) {
 
     // CDT Example: 3D Constrained Delaunay Tetrahedrization
     m.def("tetrahedrize", [](
-        nb::ndarray<double, nb::shape<-1, 3>> points,
+        nb::ndarray<  double, nb::shape<-1, 3>> points,
         nb::ndarray<uint32_t, nb::shape<-1, 3>> triangles) {
 
         // Create a PLC from the input points and triangles
@@ -52,7 +53,7 @@ NB_MODULE(vocd_ext, m) {
         //// all the tets but the ghosts are marked as "internal".
         //uint32_t num_inner_tets = (uint32_t)Steiner_plc.markInnerTets();
 
-        std::vector<std::array<double, 3>> output_points;
+        std::vector<std::array<  double, 3>> output_points;
         std::vector<std::array<uint32_t, 4>> output_tetrahedra;
 
         // Output a list of points and tetrahedra indices
@@ -64,13 +65,16 @@ NB_MODULE(vocd_ext, m) {
                 throw std::runtime_error("Vertex has non-finite coordinates");
             }
         }
-        for (size_t i = 0; i < tin->tet_node.size(); i += 4) {
-            output_tetrahedra.push_back({
-                tin->tet_node[i],
-                tin->tet_node[i + 1],
-                tin->tet_node[i + 2],
-                tin->tet_node[i + 3]
-            });
+
+        for (uint32_t i = 0; i < tin->numTets(); i ++) {
+            if (tin->mark_tetrahedra[i] == DT_IN) {
+                output_tetrahedra.push_back({
+                    tin->tet_node[(i * 4)    ],
+                    tin->tet_node[(i * 4) + 1],
+                    tin->tet_node[(i * 4) + 2],
+                    tin->tet_node[(i * 4) + 3]
+                });
+            }
         }
         delete tin; // Clean up the TetMesh object
         return std::make_tuple(output_points, output_tetrahedra);
@@ -79,7 +83,9 @@ NB_MODULE(vocd_ext, m) {
 
     // Manifold Example: Create a simple cube
     m.def("create_cube", [](double x, double y, double z) {
-        return manifold::Manifold::Cube({x, y, z});
+        manifold::Manifold cube = manifold::Manifold::Cube({x, y, z});
+        manifold::MeshGL64 mesh = cube.GetMeshGL64(); // Ensure the mesh is created
+        return std::make_tuple(mesh.vertProperties, mesh.triVerts);
     }, "x"_a, "y"_a, "z"_a, "Create a cube with given dimensions");
 
     // Voro++ Example: Compute Voronoi diagram
@@ -112,9 +118,8 @@ NB_MODULE(vocd_ext, m) {
         }
 
         // Voronoi Computation
-        std::vector<manifold::Manifold> output;
-        output.reserve(points.shape(0));
-        output.resize(points.shape(0));
+        std::vector<std::vector<double>> cells;
+
         voro::c_loop_all vl(container);
         if (vl.start()) do {
             int id;
@@ -123,19 +128,18 @@ NB_MODULE(vocd_ext, m) {
 
             voro::voronoicell_neighbor c;
             if (container.compute_cell(c, vl)) {
-                std::vector<manifold::vec3> verts;
-                verts.reserve(c.p);
+                std::vector<double> verts;
+                verts.reserve(c.p * 3);
                 for (size_t i = 0; i < c.p; i++) {
-                    verts.push_back(manifold::vec3(x + 0.5 * c.pts[(4 * i) + 0],
-                                                   y + 0.5 * c.pts[(4 * i) + 1],
-                                                   z + 0.5 * c.pts[(4 * i) + 2]));
+                    verts.push_back(x + 0.5 * c.pts[(4 * i) + 0]);
+                    verts.push_back(y + 0.5 * c.pts[(4 * i) + 1]);
+                    verts.push_back(z + 0.5 * c.pts[(4 * i) + 2]);
                 }
-                output[id] = manifold::Manifold::Hull(verts);
-                verts.clear();
+                cells.push_back(verts);
             }
         } while (vl.inc());
 
-        return output;
+        return cells;//nb::ndarray<double, nb::numpy, nb::shape<-1, 3>>(verts).cast();;
     }, "points"_a, "wts"_a, "bounds"_a,
        "Compute Voronoi cell volumes for 3D points within given bounds [x_min, x_max, y_min, y_max, z_min, z_max]");
 
