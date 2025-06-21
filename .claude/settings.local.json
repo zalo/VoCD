@@ -5,7 +5,10 @@
       "Bash(mkdir:*)",
       "Bash(git init:*)",
       "Bash(git submodule add:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }
