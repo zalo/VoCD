@@ -28,8 +28,18 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-# Add nanobind
-add_subdirectory(extern/nanobind)
+
+# Scikit-build-core sets these values
+if (DEFINED SKBUILD)
+  # Add nanobind
+  add_subdirectory(extern/nanobind)
+else()
+  # Import nanobind through CMake's find_package mechanism
+  set(nanobind_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/nanobind/cmake")
+  find_package(nanobind CONFIG REQUIRED)
+endif()
+# Add the include directories for nanobind
+include_directories(${nanobind_INCLUDE_DIRS})
 
 # Configure CDT as a library
 # CDT is set up as an executable, so we need to create a library from its sources
