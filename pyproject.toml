@@ -45,6 +45,7 @@ sdist.exclude = [
     "extern/**/build",
     "extern/**/dist",
 ]
+build-dir = "build/{wheel_tag}"
 
 [tool.cibuildwheel]
 # Build for common platforms

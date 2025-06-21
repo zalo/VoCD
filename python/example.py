@@ -14,7 +14,7 @@ def test_triangulation():
     points = np.random.rand(10, 2)
     
     # Triangulate
-    triangles = vocd.triangulate_2d(points)
+    triangles = vocd.tetrahedrize(points)
     
     print(f"Generated {len(triangles)} triangles from {len(points)} points")
     print(f"First triangle indices: {triangles[0]}")
@@ -53,6 +53,6 @@ if __name__ == "__main__":
     print(f"Geometry Tools version: {vocd.__version__}")
     print()
     
-    test_triangulation()
+    #est_triangulation()
     test_manifold()
-    test_voronoi()
+    #test_voronoi()

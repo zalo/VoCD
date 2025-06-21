@@ -68,17 +68,17 @@ set(BUILD_SHARED_LIBS OFF)
 add_subdirectory(extern/voro)
 
 # Create the Python module
-nanobind_add_module(vocd STABLE_ABI LTO src/bindings.cpp)
+nanobind_add_module(vocd_ext STABLE_ABI src/vocd_ext.cpp)
 
 # Link libraries
-target_link_libraries(vocd PRIVATE 
+target_link_libraries(vocd_ext PRIVATE 
   CDT
   manifold
   voro++
 )
 
 # Set properties
-target_compile_definitions(vocd PRIVATE VERSION_INFO=${PROJECT_VERSION})
+target_compile_definitions(vocd_ext PRIVATE VERSION_INFO=${PROJECT_VERSION})
 
 # Install the Python module
-install(TARGETS vocd LIBRARY DESTINATION vocd)
+install(TARGETS vocd_ext LIBRARY DESTINATION vocd)

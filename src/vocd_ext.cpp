@@ -13,7 +13,7 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
-NB_MODULE(vocd, m) {
+NB_MODULE(vocd_ext, m) {
     m.doc() = "Geometry tools using CDT, Manifold, and Voro++";
 
     // CDT Example: 3D Constrained Delaunay Tetrahedrization
