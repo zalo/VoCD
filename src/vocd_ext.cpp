@@ -39,19 +39,19 @@ NB_MODULE(vocd_ext, m) {
 
         tin->optimizeNearDegenerateTets(false);
 
-        //// Build a structured PLC linked to the Delaunay tetrahedrization
-        //PLCx Steiner_plc(*tin, plc.triangle_vertices.data(), plc.numTriangles());
+        // Build a structured PLC linked to the Delaunay tetrahedrization
+        PLCx Steiner_plc(*tin, plc.triangle_vertices.data(), plc.numTriangles());
 
-        //// Recover segments by inserting Steiner points in both the PLC and the tetrahedrization
-        //Steiner_plc.segmentRecovery_HSi(!verbose);
+        // Recover segments by inserting Steiner points in both the PLC and the tetrahedrization
+        Steiner_plc.segmentRecovery_HSi(false);
 
-        //// Recover PLC faces by locally remeshing the tetrahedrization
-        //bool sisMethodWorks = Steiner_plc.faceRecovery(!verbose);
+        // Recover PLC faces by locally remeshing the tetrahedrization
+        bool sisMethodWorks = Steiner_plc.faceRecovery(false);
 
-        //// Mark the tets which are bounded by the PLC.
-        //// If the PLC is not a valid polyhedron (i.e. it has odd-valency edges)
-        //// all the tets but the ghosts are marked as "internal".
-        //uint32_t num_inner_tets = (uint32_t)Steiner_plc.markInnerTets();
+        // Mark the tets which are bounded by the PLC.
+        // If the PLC is not a valid polyhedron (i.e. it has odd-valency edges)
+        // all the tets but the ghosts are marked as "internal".
+        uint32_t num_inner_tets = (uint32_t)Steiner_plc.markInnerTets();
 
         std::vector<std::array<  double, 3>> output_points;
         std::vector<std::array<uint32_t, 4>> output_tetrahedra;
@@ -87,6 +87,13 @@ NB_MODULE(vocd_ext, m) {
         manifold::MeshGL64 mesh = cube.GetMeshGL64(); // Ensure the mesh is created
         return std::make_tuple(mesh.vertProperties, mesh.triVerts);
     }, "x"_a, "y"_a, "z"_a, "Create a cube with given dimensions");
+
+    // Manifold Example: Create a simple cube
+    m.def("create_sphere", [](double radius) {
+        manifold::Manifold cube = manifold::Manifold::Sphere(radius);
+        manifold::MeshGL64 mesh = cube.GetMeshGL64(); // Ensure the mesh is created
+        return std::make_tuple(mesh.vertProperties, mesh.triVerts);
+    }, "radius"_a, "Create a sphere with given radius");
 
     // Voro++ Example: Compute Voronoi diagram
     m.def("voronoi_3d", [](nb::ndarray<double, nb::shape<-1, 3>> points,
