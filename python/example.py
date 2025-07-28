@@ -41,6 +41,7 @@ def visualize_tetrahedra(tet_vertices, tet_indices):
         volume = np.abs(np.dot(edge1, np.cross(edge2, edge3))) / 6.0
         
         if volume < 0.001:
+            print(f"Skipping degenerate tetrahedron with volume {volume:.6f}")
             continue
         
         # Generate random color for this tetrahedron
@@ -127,7 +128,7 @@ def getCircumCenter(p0, p1, p2, p3):
     if det == 0.0:
         return p0
     else: 
-        v = np.linalg.cross(c, d)*np.dot(b,b) + np.linalg.cross(d, b)*np.dot(c,c) + np.linalg.cross(b, c)*np.dot(d,d)
+        v = np.cross(c, d)*np.dot(b,b) + np.cross(d, b)*np.dot(c,c) + np.cross(b, c)*np.dot(d,d)
         v /= det
         return p0 + v
 
@@ -147,23 +148,31 @@ def make_non_convex_manifold():
 
     # TODO: Reduce the tetrahedra to only those that share a face with a reflex face
 
-    #visualize_tetrahedra(tet_vertices, tet_indices)
+    visualize_tetrahedra(tet_vertices, tet_indices)
 
     tet_indices  = np.array(tet_indices, dtype=np.uint32)
     tet_vertices = np.array(tet_vertices, dtype=np.float64)
 
-
+    print(tet_indices.shape, tet_vertices.shape)
 
     scene_objects = [trimesh_obj]
     #for tet in tet_indices:
-    #    p0 = tet_vertices[tet[0]]
-    #    p1 = tet_vertices[tet[1]]
-    #    p2 = tet_vertices[tet[2]]
-    #    p3 = tet_vertices[tet[3]]
-        
-    #    circum_center = getCircumCenter(p0, p1, p2, p3)
-    #    print(f"Tetrahedron: Circumcenter at {circum_center}")
-    #    scene_objects.append(trimesh.creation.icosphere(subdivisions=1, radius=0.05).apply_translation(circum_center))
+    for i in range(len(tet_indices)):
+        p0 = tet_vertices[tet_indices[i, 0]]
+        p1 = tet_vertices[tet_indices[i, 1]]
+        p2 = tet_vertices[tet_indices[i, 2]]
+        p3 = tet_vertices[tet_indices[i, 3]]
+
+        # Check if tetrahedron is degenerate (coplanar)
+        # Calculate volume using scalar triple product
+        volume = np.abs(np.dot(p1 - p0, np.cross(p2 - p0, p3 - p0))) / 6.0
+        if volume < 0.002:
+            print(f"Skipping degenerate tetrahedron at index {i} with volume {volume:.6f}")
+            continue
+
+        circum_center = getCircumCenter(p0, p1, p2, p3)
+        print(f"Tetrahedron: Circumcenter at {circum_center} Radius1 {np.linalg.norm(p0-circum_center)} Radius2 {np.linalg.norm(p1-circum_center)} Radius3 {np.linalg.norm(p2-circum_center)} Radius4 {np.linalg.norm(p3-circum_center)}")
+        scene_objects.append(trimesh.creation.icosphere(subdivisions=1, radius=0.05).apply_translation(circum_center))
 
     # Create a trimesh scene with the non-convex manifold and tetrahedra circumcenters
     scene = trimesh.Scene(scene_objects)
