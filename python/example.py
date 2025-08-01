@@ -147,6 +147,7 @@ def make_non_convex_manifold():
     tet_vertices, tet_indices = vocd.tetrahedrize(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
 
     # TODO: Reduce the tetrahedra to only those that share a face with a reflex face
+    reflex_faces_mesh = trimesh.Trimesh(vertices=trimesh_obj.vertices, faces=trimesh_obj.faces[reflex_faces], face_colors=np.array([0, 255, 0, 100], dtype=np.uint8))
 
     visualize_tetrahedra(tet_vertices, tet_indices)
 
@@ -155,7 +156,7 @@ def make_non_convex_manifold():
 
     print(tet_indices.shape, tet_vertices.shape)
 
-    scene_objects = [trimesh_obj]
+    scene_objects = [trimesh_obj, reflex_faces_mesh]
     #for tet in tet_indices:
     for i in range(len(tet_indices)):
         p0 = tet_vertices[tet_indices[i, 0]]
