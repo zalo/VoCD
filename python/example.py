@@ -41,7 +41,7 @@ def visualize_tetrahedra(tet_vertices, tet_indices):
         volume = np.abs(np.dot(edge1, np.cross(edge2, edge3))) / 6.0
         
         if volume < 0.001:
-            print(f"Skipping degenerate tetrahedron with volume {volume:.6f}")
+            #print(f"Skipping degenerate tetrahedron with volume {volume:.6f}")
             continue
         
         # Generate random color for this tetrahedron
@@ -133,7 +133,7 @@ def getCircumCenter(p0, p1, p2, p3):
         return p0 + v
 
 def make_non_convex_manifold():
-    cube = manifold3d.Manifold.cube([1.0, 1.0, 1.0]).translate([-0.5, -0.5, -0.75])
+    cube   = manifold3d.Manifold.cube([1.0, 1.0, 1.0]).translate([-0.5, -0.5, -0.75])
     sphere = manifold3d.Manifold.sphere(0.7)
 
     # Create a non-convex manifold by combining a cube and a sphere
@@ -146,17 +146,35 @@ def make_non_convex_manifold():
 
     tet_vertices, tet_indices = vocd.tetrahedrize(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
 
-    # TODO: Reduce the tetrahedra to only those that share a face with a reflex face
-    reflex_faces_mesh = trimesh.Trimesh(vertices=trimesh_obj.vertices, faces=trimesh_obj.faces[reflex_faces], face_colors=np.array([0, 255, 0, 100], dtype=np.uint8))
-
-    visualize_tetrahedra(tet_vertices, tet_indices)
-
-    tet_indices  = np.array(tet_indices, dtype=np.uint32)
+    tet_indices  = np.array(tet_indices , dtype=np.uint32)
     tet_vertices = np.array(tet_vertices, dtype=np.float64)
+
+    # Reduce the tetrahedra to only those that share a face with a reflex face
+    # TODO: THERE IS A FUNNY BUG HERE THAT ONLY FINDS FOUR TETRAHEDRA
+    #       THAT SHARE A FACE WITH THE REFLEX FACES
+    pruned_tet_indices = []
+    for face in reflex_faces:
+        reflex_face_vertices = trimesh_obj.vertices[trimesh_obj.faces[face]]
+        for i in range(tet_indices.shape[0]):
+            this_tet_vertices = tet_vertices[tet_indices[i]]
+
+            #print("Comparing tetrahedron", i, "with reflex face", face)
+
+            num_shared_vertices = 0
+            for j in range(3):
+                for k in range(4):
+                    if np.linalg.norm(reflex_face_vertices[j] - this_tet_vertices[k]) < 1e-4:
+                        num_shared_vertices += 1
+                        #break
+            if num_shared_vertices == 3:
+                print(f"Tetrahedron {i} shares a face with reflex face {face}")
+                pruned_tet_indices.append(tet_indices[i])
+
+    visualize_tetrahedra(tet_vertices, np.array(pruned_tet_indices))
 
     print(tet_indices.shape, tet_vertices.shape)
 
-    scene_objects = [trimesh_obj, reflex_faces_mesh]
+    scene_objects = [trimesh_obj, trimesh.Trimesh(vertices=trimesh_obj.vertices, faces=trimesh_obj.faces[reflex_faces], face_colors=np.array([0, 255, 0, 100], dtype=np.uint8))]
     #for tet in tet_indices:
     for i in range(len(tet_indices)):
         p0 = tet_vertices[tet_indices[i, 0]]
@@ -168,11 +186,11 @@ def make_non_convex_manifold():
         # Calculate volume using scalar triple product
         volume = np.abs(np.dot(p1 - p0, np.cross(p2 - p0, p3 - p0))) / 6.0
         if volume < 0.002:
-            print(f"Skipping degenerate tetrahedron at index {i} with volume {volume:.6f}")
+            #print(f"Skipping degenerate tetrahedron at index {i} with volume {volume:.6f}")
             continue
 
         circum_center = getCircumCenter(p0, p1, p2, p3)
-        print(f"Tetrahedron: Circumcenter at {circum_center} Radius1 {np.linalg.norm(p0-circum_center)} Radius2 {np.linalg.norm(p1-circum_center)} Radius3 {np.linalg.norm(p2-circum_center)} Radius4 {np.linalg.norm(p3-circum_center)}")
+        #print(f"Tetrahedron: Circumcenter at {circum_center} Radius1 {np.linalg.norm(p0-circum_center)} Radius2 {np.linalg.norm(p1-circum_center)} Radius3 {np.linalg.norm(p2-circum_center)} Radius4 {np.linalg.norm(p3-circum_center)}")
         scene_objects.append(trimesh.creation.icosphere(subdivisions=1, radius=0.05).apply_translation(circum_center))
 
     # Create a trimesh scene with the non-convex manifold and tetrahedra circumcenters
