@@ -132,6 +132,11 @@ def getCircumCenter(p0, p1, p2, p3):
         v /= det
         return p0 + v
 
+def constrain_to_segment(position, a, b):
+    ba = b - a
+    t = np.dot(position - a, ba) / np.dot(ba, ba)
+    return a + t * (b - a) if 0 <= t <= 1 else (a if t < 0 else b)
+
 def make_non_convex_manifold():
     cube   = manifold3d.Manifold.cube([1.0, 1.0, 1.0]).translate([-0.5, -0.5, -0.75])
     sphere = manifold3d.Manifold.sphere(0.7)
@@ -158,17 +163,30 @@ def make_non_convex_manifold():
         for i in range(tet_indices.shape[0]):
             this_tet_vertices = tet_vertices[tet_indices[i]]
 
+            # Check if three of the tetrahedron's vertices are within a small distance of the reflex face edges
+            # This is a more robust way to check for shared faces
+            shared_vertices = 0
+            for j in range(3):
+                a = reflex_face_vertices[j]
+                b = reflex_face_vertices[(j+1) % 3]
+                for pair in [(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3)]:
+                    # Constrain the tetrahedron vertex to the segment defined by the face edge
+                    constrained_vertex = constrain_to_segment(this_tet_vertices[pair[0]], a, b)
+                    if  < 1e-4:
+                        shared_vertices += 1
+                        break
+
             #print("Comparing tetrahedron", i, "with reflex face", face)
 
-            num_shared_vertices = 0
-            for j in range(3):
-                for k in range(4):
-                    if np.linalg.norm(reflex_face_vertices[j] - this_tet_vertices[k]) < 1e-4:
-                        num_shared_vertices += 1
-                        #break
-            if num_shared_vertices == 3:
-                print(f"Tetrahedron {i} shares a face with reflex face {face}")
-                pruned_tet_indices.append(tet_indices[i])
+            #num_shared_vertices = 0
+            #for j in range(3):
+            #    for k in range(4):
+            #        if np.linalg.norm(reflex_face_vertices[j] - this_tet_vertices[k]) < 1e-4:
+            #            num_shared_vertices += 1
+            #            #break
+            #if num_shared_vertices == 3:
+            #    print(f"Tetrahedron {i} shares a face with reflex face {face}")
+            #    pruned_tet_indices.append(tet_indices[i])
 
     visualize_tetrahedra(tet_vertices, np.array(pruned_tet_indices))
 
