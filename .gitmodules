@@ -10,3 +10,6 @@
 [submodule "extern/voro"]
 	path = extern/voro
 	url = https://github.com/chr1shr/voro
+[submodule "extern/geometry-central"]
+	path = extern/geometry-central
+	url = https://github.com/nmwsharp/geometry-central.git

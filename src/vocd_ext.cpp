@@ -11,6 +11,11 @@
 #include <manifold/manifold.h>
 #include "voro++.hh"
 
+#include "geometrycentral/surface/surface_mesh.h"
+#include "geometrycentral/surface/manifold_surface_mesh.h"
+#include "geometrycentral/surface/halfedge_mesh.h"
+#include "geometrycentral/surface/halfedge_factories.h"
+
 namespace nb = nanobind;
 using namespace nb::literals;
 
@@ -149,6 +154,61 @@ NB_MODULE(vocd_ext, m) {
         return cells;//nb::ndarray<double, nb::numpy, nb::shape<-1, 3>>(verts).cast();;
     }, "points"_a, "wts"_a, "bounds"_a,
        "Compute Voronoi cell volumes for 3D points within given bounds [x_min, x_max, y_min, y_max, z_min, z_max]");
+
+    m.def("getReflexEdges", [](
+        nb::ndarray<  double, nb::shape<-1, 3>> points,
+        nb::ndarray<uint32_t, nb::shape<-1, 3>> triangles) {
+            std::vector<std::vector<size_t>> polygons = std::vector<std::vector<size_t>>();
+            std::vector<geometrycentral::Vector3> vertexPositions = std::vector<geometrycentral::Vector3>();
+
+            for(size_t i = 0; i < points.shape(0); i++) {
+                auto vertex = geometrycentral::Vector3(
+                    points(i, 0),
+                    points(i, 1),
+                    points(i, 2)
+                );
+                vertexPositions.push_back(vertex);
+	        }
+
+			for (size_t i = 0; i < triangles.shape(0); i++) {
+                std::vector<size_t> polygon;
+                polygon.push_back(triangles(i, 0));
+                polygon.push_back(triangles(i, 1));
+                polygon.push_back(triangles(i, 2));
+                polygons.push_back(polygon);
+            }
+
+            // Create a Geometry Central half-edge mesh from the input triangles and points
+            std::tuple<std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>, 
+                       std::unique_ptr<geometrycentral::surface::VertexPositionGeometry>> meshAndGeo =
+                geometrycentral::surface::makeHalfedgeAndGeometry(polygons, vertexPositions);
+
+			std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh> mesh = std::move(std::get<0>(meshAndGeo));
+			std::unique_ptr<geometrycentral::surface::VertexPositionGeometry> geometry = std::move(std::get<1>(meshAndGeo));
+            std::vector<std::tuple<std::array<size_t, 2>, std::array<size_t, 2>>> reflexEdges;
+            // Identify reflex edges
+            for (auto e : mesh->edges()) {
+                auto he1 = e.halfedge();
+                auto he2 = he1.twin();
+                auto f1 = he1.face();
+                auto f2 = he2.face();
+                auto n1 = geometry->faceNormal(f1);
+                auto n2 = geometry->faceNormal(f2);
+                geometrycentral::Vector3 tangent =
+                    geometrycentral::cross(n1,
+                        geometry->vertexPositions[e.secondVertex().getIndex()] -
+                        geometry->vertexPositions[e. firstVertex().getIndex()]);
+                double tangentProjection = geometrycentral::dot(n2, tangent);
+                //  If we've found a pair of reflex triangles, add them to the set
+                if (tangentProjection > 0.000000001) {
+                    size_t v1 = e.halfedge().vertex().getIndex();
+                    size_t v2 = e.halfedge().twin().vertex().getIndex();
+                    reflexEdges.push_back(std::make_tuple(std::array<size_t, 2> {v1, v2}, 
+                                                          std::array<size_t, 2> { f1.getIndex(), f2.getIndex() }));
+                }
+            }
+			return reflexEdges;
+    }, "points"_a, "triangles"_a, "Identify reflex edges in a triangular mesh defined by input triangles");
 
     // Version info
     m.attr("__version__") = "0.1.0";

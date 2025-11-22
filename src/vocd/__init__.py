@@ -5,7 +5,8 @@ from .vocd_ext import (
     create_cube,
     create_sphere,
     voronoi_3d,
+    getReflexEdges,
     __version__
 )
 
-__all__ = ['tetrahedrize', 'create_cube', 'create_sphere', 'voronoi_3d', '__version__']
+__all__ = ['tetrahedrize', 'create_cube', 'create_sphere', 'voronoi_3d', 'getReflexEdges', '__version__']

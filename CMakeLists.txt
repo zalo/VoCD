@@ -78,6 +78,9 @@ set(VORO_ENABLE_DOXYGEN    OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF)
 add_subdirectory(extern/voro)
 
+# Configure geometry-central
+add_subdirectory("extern/geometry-central")
+
 # Create the Python module
 nanobind_add_module(vocd_ext STABLE_ABI LTO src/vocd_ext.cpp)
 
@@ -86,6 +89,7 @@ target_link_libraries(vocd_ext PRIVATE
   CDT
   manifold
   voro++
+  geometry-central
 )
 
 # Set properties
