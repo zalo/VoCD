@@ -8,6 +8,7 @@ import manifold3d
 import trimesh
 import numpy as np
 from random import random
+import time
 np.set_printoptions(precision=4, suppress=True)
 
 rand_color = [random(), random(), random()]
@@ -90,6 +91,25 @@ def visualize_tetrahedra(tet_vertices, tet_indices):
 
     trimesh_obj = trimesh.Trimesh(vertices=scaled_vertices, faces=scaled_tet_indices, vertex_colors=vertex_colors)
     trimesh_obj.show()
+
+def dot2(v):
+    return np.dot(v, v)
+def distance_to_triangle(v1, v2, v3, p ):
+    v21 = v2 - v1
+    p1  =  p - v1
+    v32 = v3 - v2
+    p2  =  p - v2
+    v13 = v1 - v3
+    p3  =  p - v3
+    nor = np.cross(v21, v13)
+    return np.sqrt( min( min( # 3 edges  
+                    dot2(v21*np.clip(np.dot(v21,p1)/dot2(v21), 0.0, 1.0)-p1), 
+                    dot2(v32*np.clip(np.dot(v32,p2)/dot2(v32), 0.0, 1.0)-p2) ), 
+                    dot2(v13*np.clip(np.dot(v13,p3)/dot2(v13), 0.0, 1.0)-p3) )
+                    if (np.sign(np.dot(np.cross(v21,nor),p1)) +  # inside/outside test 
+                        np.sign(np.dot(np.cross(v32,nor),p2)) + 
+                        np.sign(np.dot(np.cross(v13,nor),p3))<2.0)
+                    else np.dot(nor,p1)*np.dot(nor,p1)/dot2(nor) ) # 1 face 
 
 def cells_to_manifolds(cells, explode=False):
     # Compute the convex hull of the Voronoi cells
@@ -344,8 +364,12 @@ def test_reflex():
     print(f"Reflex edges: {reflex_edges}")
     print()
 
-def visualize_triangle_convex_decomposition(fun_shape):
+def visualize_triangle_convex_decomposition(fun_shape : manifold3d.Manifold):
     """Visualize convex decomposition using reflex face circumcenters"""
+
+    #fun_shape = fun_shape.split_by_plane((0.0, 0.0, 1.0), 0.0)[0]
+
+    t0 = time.perf_counter()
     trimesh_obj = to_trimesh(fun_shape)
 
     face_set = set()
@@ -387,12 +411,23 @@ def visualize_triangle_convex_decomposition(fun_shape):
         exploded_hulls = [fun_shape]
 
     trimesh_hulls = [to_trimesh(hull) for hull in exploded_hulls]
+    print(f"Convex pieces: {len(trimesh_hulls)} in {time.perf_counter() - t0:.4f} seconds")
     scene = trimesh.Scene(trimesh_hulls)
     scene.show()
 
 def visualize_tetrahedron_convex_decomposition(fun_shape):
     """Visualize convex decomposition using reflex face circumcenters"""
+    t0 = time.perf_counter()
     trimesh_obj = to_trimesh(fun_shape)
+
+    face_set = set()
+    reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+    if len(reflex_edges_and_faces) > 0:
+        for edge_indices, face_indices in reflex_edges_and_faces:
+            for face_index in face_indices:
+                face_set.add(face_index)
+        reflex_faces = np.array(list(face_set), dtype=np.uint32)
+        face_vertices = trimesh_obj.vertices[trimesh_obj.faces[reflex_faces]]
 
     tet_vertices, tet_indices = vocd.tetrahedrize(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
 
@@ -402,6 +437,30 @@ def visualize_tetrahedron_convex_decomposition(fun_shape):
     circumcenters = {}
     for tetrahedron_indices in tet_indices:
         tetrahedron_vertices = tet_vertices[tetrahedron_indices]
+
+        # Keep tetrahedron if it shares a face plane with a reflex face
+        face_found = False
+        for i in range(4):
+            tet_face = np.array([tetrahedron_vertices[j] for j in range(4) if j != i])
+            for reflex_face_index in reflex_faces:
+                reflex_face = trimesh_obj.vertices[trimesh_obj.faces[reflex_face_index]]
+                # Check if the face planes are the same by comparing normals and a point
+                tet_normal = np.cross(tet_face[1] - tet_face[0], tet_face[2] - tet_face[0])
+                tet_normal /= np.linalg.norm(tet_normal)
+                reflex_normal = np.cross(reflex_face[1] - reflex_face[0], reflex_face[2] - reflex_face[0])
+                reflex_normal /= np.linalg.norm(reflex_normal)
+                if np.allclose(tet_normal, reflex_normal) or np.allclose(tet_normal, -reflex_normal):
+                    # Check if a point from the tetrahedron face is close to the reflex face plane
+                    d = -np.dot(reflex_normal, reflex_face[0])
+                    distance = np.dot(reflex_normal, tet_face[0]) + d
+                    if np.abs(distance) < 1e-4:
+                        face_found = True
+                        break
+            if face_found:
+                break
+        if not face_found:
+            continue
+
         circumcenter = getCircumCenter(tetrahedron_vertices[0], tetrahedron_vertices[1], tetrahedron_vertices[2], tetrahedron_vertices[3])
         #print(f"Face {face_index} circumcenter at {circumcenter}")
         circumcenters[str(circumcenter)] = (circumcenter, np.linalg.norm(circumcenter - tetrahedron_vertices[0]))
@@ -428,8 +487,30 @@ def visualize_tetrahedron_convex_decomposition(fun_shape):
     exploded_hulls = explode(intersected_hulls)
 
     trimesh_hulls = [to_trimesh(hull) for hull in exploded_hulls]
+    print(f"Convex pieces: {len(trimesh_hulls)} in {time.perf_counter() - t0:.4f} seconds")
     scene = trimesh.Scene(trimesh_hulls)
     scene.show()
+
+def visualize_CGAL_convex_decomposition(fun_shape : manifold3d.Manifold):
+    """Visualize convex decomposition using reflex face circumcenters"""
+
+    #fun_shape = fun_shape.split_by_plane((0.0, 0.0, 1.0), 0.0)[0]
+
+    t0 = time.perf_counter()
+    trimesh_obj = to_trimesh(fun_shape)
+
+    convex_hull_vertices = vocd.cgal_convex_decompose_mesh(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+    print("CGAL Convex Decomposition complete", convex_hull_vertices)
+
+    #intersected_hulls = [fun_shape ^ hull for hull in hulls if not (fun_shape ^ hull).is_empty()]
+
+    #exploded_hulls = explode(intersected_hulls)
+
+    #trimesh_hulls = [to_trimesh(hull) for hull in exploded_hulls]
+    print(f"Convex pieces: {len(convex_hull_vertices)} in {time.perf_counter() - t0:.4f} seconds")
+    #scene = trimesh.Scene(trimesh_hulls)
+    #scene.show()
+
 
 if __name__ == "__main__":
     print(f"Geometry Tools version: {vocd.__version__}")
@@ -442,17 +523,26 @@ if __name__ == "__main__":
     #print(vocd)
     #test_reflex()
     
-    #cube  = manifold3d.Manifold.cube([1.0, 1.0, 1.0], True)
-    #cube2 = manifold3d.Manifold.sphere(1.0, 64)
-    ## Create a non-convex manifold by combining a cube and a sphere
+    cube  = manifold3d.Manifold.cube([1.0, 1.0, 1.0], True)
+    cube2 = manifold3d.Manifold.sphere(1.0, 32)
+    # Create a non-convex manifold by combining a cube and a sphere
     #fun_shape = (cube - cube2.translate([-0.5, -0.5, -0.5])) - cube2.translate([-0.5, 0.5, -0.5])
-    cube  = manifold3d.Manifold.cube([1.0, 1.0, 0.5], True)
+    fun_shape  = manifold3d.Manifold.cube([1.0, 1.0, 0.5], True)
     for i in range(5):
-        cube = cube - manifold3d.Manifold.cube([1.2, 0.5, 0.5], True).rotate([45, 0, 0]).translate([0, i * 0.15 - 0.25, -0.55])
-    cube = cube.rotate([0, 180, 90])
+        fun_shape = fun_shape - manifold3d.Manifold.cube([1.2, 0.5, 0.5], True).rotate([45, 0, 0]).translate([0, i * 0.15 - 0.25, -0.55])
+    fun_shape = fun_shape.rotate([0, 180, 90])
     for i in range(5):
-        cube = cube - manifold3d.Manifold.cube([1.2, 0.5, 0.5], True).rotate([45, 0, 0]).translate([0, i * 0.15 - 0.25, -0.55])
+        fun_shape = fun_shape - manifold3d.Manifold.cube([1.2, 0.5, 0.5], True).rotate([45, 0, 0]).translate([0, i * 0.15 - 0.25, -0.55])
 
-    visualize_triangle_convex_decomposition(cube)
+    visualize_triangle_convex_decomposition(fun_shape)
 
-    visualize_tetrahedron_convex_decomposition(cube)
+    #visualize_tetrahedron_convex_decomposition(fun_shape)
+
+
+    # Reddit Convex Decomposition
+    # Have triangles incrementally add their non-reflex neighbors to a convex hull
+    # Check to see if the hull remains inside of the original mesh. If so, continue adding.
+    # For the inside check, check if the vertex is shared with the original mesh or do a raycast test (use BVH)
+
+    # Use adapted reddit method to consolidate tetrahedra or cells into larger convex pieces, using similar insidedness test.
+    # Consolidation could be done as a post-process after either triangle-based, tetrahedron/cell-based, or CGAL convex decomposition.
