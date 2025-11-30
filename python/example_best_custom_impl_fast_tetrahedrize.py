@@ -43,14 +43,6 @@ def cells_to_manifolds(cells, explode=False):
     hulls = []
     for cell in cells:
         points = np.array(cell).reshape(-1, 3)
-
-        if explode:
-            # Compute the average of the points to center the hull
-            avg_point = np.mean(points, axis=0)
-            points -= avg_point  # Center the points around the origin
-            points *= 0.8  # Scale down the points
-            points += avg_point  # Shift back to original position
-
         hull = manifold3d.Manifold.hull_points(points)#trimesh.convex.convex_hull(points)
         hulls.append(hull)
     return hulls
@@ -210,7 +202,7 @@ def mmf_tetrahedron_convex_decomposition(fun_shape : manifold3d.Manifold) -> lis
         #print(f"Voronoi cell hull vertices: {cells}")
         print(f"Computed {len(cells)} Voronoi cell volumes")
 
-        hulls = cells_to_manifolds(cells, False)
+        hulls = cells_to_manifolds(cells)
 
         print(f"Converted Voronoi cells to {len(hulls)} manifolds")
 
@@ -254,6 +246,18 @@ def mmf_tetrahedron_convex_decomposition(fun_shape : manifold3d.Manifold) -> lis
         outputs += recursed_hulls
     return outputs
 
+def native_convex_decomposition(fun_shape : manifold3d.Manifold) -> list[manifold3d.Manifold]:
+    """Visualize convex decomposition using native manifold3d method"""
+    global t0
+    t0 = time.perf_counter()
+
+    trimesh_obj = to_trimesh(fun_shape)
+    t00 = time.perf_counter()
+    output_objs = vocd.mmf_tetrahedron_convex_decomposition(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+    print(f"Native convex decomposition produced {len(output_objs)} pieces in {time.perf_counter() - t00:.4f} seconds")
+    outputs = [manifold3d.Manifold.hull_points(obj[0]) for obj in output_objs]
+    return outputs
+
 if __name__ == "__main__":
     print(f"Geometry Tools version: {vocd.__version__}")
     print()
@@ -276,5 +280,6 @@ if __name__ == "__main__":
 
     #fun_shape = manifold3d.Manifold.sphere(0.6, 16) + manifold3d.Manifold.sphere(0.6, 16).translate([0.3, 0.3, 0.3])
 
-    visualize_convex_decomposition(mmf_tetrahedron_convex_decomposition(fun_shape))
+    #visualize_convex_decomposition(mmf_tetrahedron_convex_decomposition(fun_shape))
 
+    visualize_convex_decomposition(native_convex_decomposition(fun_shape))

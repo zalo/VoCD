@@ -14,6 +14,8 @@
 #include <map>
 #include <sstream>
 #include <iomanip>
+#include <chrono>
+#include <iostream>
 
 #include "delaunay.h"
 #include "inputPLC.h"
@@ -598,21 +600,34 @@ std::vector<manifold::Manifold> cellsToManifolds(const std::vector<std::vector<d
 // mmf_tetrahedron_convex_decomposition
 // ============================================================================
 
-std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Manifold shape) {
+std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Manifold shape, int depth = 0) {
+    using Clock = std::chrono::high_resolution_clock;
+    auto totalStart = Clock::now();
+    std::string indent(depth * 2, ' ');
+
     std::vector<manifold::Manifold> outputs;
 
     if (shape.IsEmpty()) {
         return outputs;
     }
 
+    auto decomposeStart = Clock::now();
     std::vector<manifold::Manifold> shapes = shape.Decompose();
+    auto decomposeEnd = Clock::now();
+    std::cout << indent << "[Decompose input] "
+              << std::chrono::duration<double, std::milli>(decomposeEnd - decomposeStart).count() << " ms" << std::endl;
+
     if (shapes.empty()) {
         outputs.push_back(shape);
         return outputs;
     }
 
-    for (auto& curShape : shapes) {
+    for (size_t shapeIdx = 0; shapeIdx < shapes.size(); shapeIdx++) {
+        auto& curShape = shapes[shapeIdx];
         if (curShape.IsEmpty()) continue;
+
+        std::cout << indent << "Processing shape " << shapeIdx + 1 << "/" << shapes.size() << std::endl;
+        auto shapeStart = Clock::now();
 
         manifold::MeshGL64 meshGL = curShape.GetMeshGL64();
         const auto& vertProps = meshGL.vertProperties;
@@ -622,6 +637,7 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
         size_t numTris = triVerts.size() / 3;
 
         // Extract vertices
+        auto extractStart = Clock::now();
         std::vector<double> verts;
         for (size_t i = 0; i < numVerts; i++) {
             verts.push_back(vertProps[i * meshGL.numProp + 0]);
@@ -634,9 +650,17 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
         for (size_t i = 0; i < triVerts.size(); i++) {
             tris.push_back((uint32_t)triVerts[i]);
         }
+        auto extractEnd = Clock::now();
+        std::cout << indent << "  [Extract mesh data] "
+                  << std::chrono::duration<double, std::milli>(extractEnd - extractStart).count() << " ms" << std::endl;
 
         // Get reflex faces
+        auto reflexStart = Clock::now();
         std::set<uint32_t> reflexFaceSet = getReflexFaces(verts.data(), numVerts, tris.data(), numTris);
+        auto reflexEnd = Clock::now();
+        std::cout << indent << "  [Get reflex faces] "
+                  << std::chrono::duration<double, std::milli>(reflexEnd - reflexStart).count() << " ms"
+                  << " (" << reflexFaceSet.size() << " reflex faces)" << std::endl;
 
         if (reflexFaceSet.empty()) {
             outputs.push_back(curShape);
@@ -644,6 +668,7 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
         }
 
         // Build durable reflex face keys and collect face vertices
+        auto keysStart = Clock::now();
         std::set<std::string> durableReflexFaceKeys;
         std::vector<vec3> uniqueFaceVertices;
         std::set<std::string> addedVerts;
@@ -667,6 +692,10 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
             if (addedVerts.find(k1) == addedVerts.end()) { addedVerts.insert(k1); uniqueFaceVertices.push_back(v1); }
             if (addedVerts.find(k2) == addedVerts.end()) { addedVerts.insert(k2); uniqueFaceVertices.push_back(v2); }
         }
+        auto keysEnd = Clock::now();
+        std::cout << indent << "  [Build face keys] "
+                  << std::chrono::duration<double, std::milli>(keysEnd - keysStart).count() << " ms"
+                  << " (" << uniqueFaceVertices.size() << " unique vertices)" << std::endl;
 
         if (uniqueFaceVertices.empty()) {
             outputs.push_back(curShape);
@@ -713,9 +742,15 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
         }
 
         // Tetrahedralize
+        auto tetStart = Clock::now();
         auto tetIndices = createTets(tetVertsFlat.data(), tetVertices.size(), 0.001);
+        auto tetEnd = Clock::now();
+        std::cout << indent << "  [Tetrahedralize] "
+                  << std::chrono::duration<double, std::milli>(tetEnd - tetStart).count() << " ms"
+                  << " (" << tetIndices.size() << " tets from " << tetVertices.size() << " verts)" << std::endl;
 
         // Compute circumcenters for tets that share a face with reflex faces
+        auto circumStart = Clock::now();
         std::map<std::string, std::pair<vec3, double>> circumcenters;
 
         for (const auto& tetIdx : tetIndices) {
@@ -746,6 +781,10 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
             oss << std::setprecision(10) << cc.x << "," << cc.y << "," << cc.z;
             circumcenters[oss.str()] = std::make_pair(cc, r);
         }
+        auto circumEnd = Clock::now();
+        std::cout << indent << "  [Compute circumcenters] "
+                  << std::chrono::duration<double, std::milli>(circumEnd - circumStart).count() << " ms"
+                  << " (" << circumcenters.size() << " circumcenters)" << std::endl;
 
         if (circumcenters.empty()) {
             outputs.push_back(curShape);
@@ -765,10 +804,22 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
         double bounds[6] = {minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, minBounds.z, maxBounds.z};
 
         // Compute Voronoi
+        auto voronoiStart = Clock::now();
         auto cells = voronoi3d(points.data(), points.size() / 3, wts.data(), wts.size(), bounds);
+        auto voronoiEnd = Clock::now();
+        std::cout << indent << "  [Compute Voronoi] "
+                  << std::chrono::duration<double, std::milli>(voronoiEnd - voronoiStart).count() << " ms"
+                  << " (" << cells.size() << " cells)" << std::endl;
+
+        auto hullsStart = Clock::now();
         auto hulls = cellsToManifolds(cells);
+        auto hullsEnd = Clock::now();
+        std::cout << indent << "  [Cells to manifolds] "
+                  << std::chrono::duration<double, std::milli>(hullsEnd - hullsStart).count() << " ms"
+                  << " (" << hulls.size() << " hulls)" << std::endl;
 
         // Intersect hulls with original shape
+        auto intersectStart = Clock::now();
         std::vector<manifold::Manifold> intersectedHulls;
         for (auto& hull : hulls) {
             manifold::Manifold intersected = shape ^ hull;
@@ -776,8 +827,13 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
                 intersectedHulls.push_back(intersected);
             }
         }
+        auto intersectEnd = Clock::now();
+        std::cout << indent << "  [Intersect with shape] "
+                  << std::chrono::duration<double, std::milli>(intersectEnd - intersectStart).count() << " ms"
+                  << " (" << intersectedHulls.size() << " non-empty)" << std::endl;
 
         // Decompose and simplify
+        auto simplifyStart = Clock::now();
         for (int iter = 0; iter < 3; iter++) {
             std::vector<manifold::Manifold> decomposed;
             for (auto& hull : intersectedHulls) {
@@ -788,8 +844,13 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
             }
             intersectedHulls = decomposed;
         }
+        auto simplifyEnd = Clock::now();
+        std::cout << indent << "  [Decompose & simplify 3x] "
+                  << std::chrono::duration<double, std::milli>(simplifyEnd - simplifyStart).count() << " ms"
+                  << " (" << intersectedHulls.size() << " pieces)" << std::endl;
 
         // Final decomposition
+        auto finalDecompStart = Clock::now();
         std::vector<manifold::Manifold> finalHulls;
         for (auto& hull : intersectedHulls) {
             auto parts = hull.Decompose();
@@ -799,8 +860,14 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
                 }
             }
         }
+        auto finalDecompEnd = Clock::now();
+        std::cout << indent << "  [Final decomposition] "
+                  << std::chrono::duration<double, std::milli>(finalDecompEnd - finalDecompStart).count() << " ms"
+                  << " (" << finalHulls.size() << " final hulls)" << std::endl;
 
         // Recurse on non-convex pieces
+        auto recurseStart = Clock::now();
+        size_t recursionCount = 0;
         for (size_t i = 0; i < finalHulls.size(); i++) {
             auto& hull = finalHulls[i];
             manifold::MeshGL64 hullMesh = hull.GetMeshGL64();
@@ -823,8 +890,10 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
 
             if (!hReflexFaces.empty() && (enforcedHull.Volume() - hull.Volume() > 0.0001)) {
                 // Rotate and recurse
+                recursionCount++;
+                std::cout << indent << "  Recursing on hull " << i << " (depth " << depth + 1 << ")..." << std::endl;
                 manifold::Manifold rotated = hull.Rotate(90, 0, 0);
-                auto recursed = mmfTetrahedronConvexDecomposition(rotated);
+                auto recursed = mmfTetrahedronConvexDecomposition(rotated, depth + 1);
                 for (auto& r : recursed) {
                     outputs.push_back(r.Rotate(-90, 0, 0));
                 }
@@ -832,7 +901,20 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
                 outputs.push_back(hull);
             }
         }
+        auto recurseEnd = Clock::now();
+        std::cout << indent << "  [Check convexity & recurse] "
+                  << std::chrono::duration<double, std::milli>(recurseEnd - recurseStart).count() << " ms"
+                  << " (" << recursionCount << " recursions)" << std::endl;
+
+        auto shapeEnd = Clock::now();
+        std::cout << indent << "  [Shape total] "
+                  << std::chrono::duration<double, std::milli>(shapeEnd - shapeStart).count() << " ms" << std::endl;
     }
+
+    auto totalEnd = Clock::now();
+    std::cout << indent << "[TOTAL] "
+              << std::chrono::duration<double, std::milli>(totalEnd - totalStart).count() << " ms"
+              << " (" << outputs.size() << " output pieces)" << std::endl;
 
     return outputs;
 }
@@ -902,34 +984,57 @@ NB_MODULE(vocd_ext, m) {
 
     // MMF Tetrahedron Convex Decomposition
     m.def("mmf_tetrahedron_convex_decomposition", [](
-        nb::ndarray<double, nb::shape<-1, -1>> vertProperties,
-        nb::ndarray<size_t, nb::shape<-1>> triVerts) {
+        nb::ndarray<double, nb::shape<-1, 3>> points,
+        nb::ndarray<uint32_t, nb::shape<-1, 3>> triangles) {
 
-        // Build manifold from mesh data
+        // Build manifold from points and triangles (same format as getReflexEdges)
         manifold::MeshGL64 meshGL;
-        meshGL.numProp = vertProperties.shape(1);
-        meshGL.vertProperties.reserve(vertProperties.shape(0) * meshGL.numProp);
-        for (size_t i = 0; i < vertProperties.shape(0); i++) {
-            for (size_t j = 0; j < meshGL.numProp; j++) {
-                meshGL.vertProperties.push_back(vertProperties(i, j));
-            }
+        meshGL.numProp = 3;
+        meshGL.vertProperties.reserve(points.shape(0) * 3);
+        for (size_t i = 0; i < points.shape(0); i++) {
+            meshGL.vertProperties.push_back(points(i, 0));
+            meshGL.vertProperties.push_back(points(i, 1));
+            meshGL.vertProperties.push_back(points(i, 2));
         }
-        meshGL.triVerts.reserve(triVerts.shape(0));
-        for (size_t i = 0; i < triVerts.shape(0); i++) {
-            meshGL.triVerts.push_back(triVerts(i));
+        meshGL.triVerts.reserve(triangles.shape(0) * 3);
+        for (size_t i = 0; i < triangles.shape(0); i++) {
+            meshGL.triVerts.push_back(triangles(i, 0));
+            meshGL.triVerts.push_back(triangles(i, 1));
+            meshGL.triVerts.push_back(triangles(i, 2));
         }
 
         manifold::Manifold shape(meshGL);
         auto results = mmfTetrahedronConvexDecomposition(shape);
 
-        // Convert results back to mesh data
-        std::vector<std::tuple<std::vector<double>, std::vector<size_t>>> output;
+        // Convert results back to points and triangles format
+        std::vector<std::tuple<std::vector<std::array<double, 3>>, std::vector<std::array<uint32_t, 3>>>> output;
         for (auto& result : results) {
             auto mesh = result.GetMeshGL64();
-            output.push_back(std::make_tuple(mesh.vertProperties, mesh.triVerts));
+            std::vector<std::array<double, 3>> outPoints;
+            std::vector<std::array<uint32_t, 3>> outTris;
+
+            size_t numVerts = mesh.vertProperties.size() / mesh.numProp;
+            for (size_t i = 0; i < numVerts; i++) {
+                outPoints.push_back({
+                    mesh.vertProperties[i * mesh.numProp + 0],
+                    mesh.vertProperties[i * mesh.numProp + 1],
+                    mesh.vertProperties[i * mesh.numProp + 2]
+                });
+            }
+
+            size_t numTris = mesh.triVerts.size() / 3;
+            for (size_t i = 0; i < numTris; i++) {
+                outTris.push_back({
+                    (uint32_t)mesh.triVerts[i * 3 + 0],
+                    (uint32_t)mesh.triVerts[i * 3 + 1],
+                    (uint32_t)mesh.triVerts[i * 3 + 2]
+                });
+            }
+
+            output.push_back(std::make_tuple(outPoints, outTris));
         }
         return output;
-    }, "vertProperties"_a, "triVerts"_a,
+    }, "points"_a, "triangles"_a,
        "Perform convex decomposition using tetrahedron circumcenters and Voronoi cells");
 
     // Version info
