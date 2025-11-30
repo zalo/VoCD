@@ -12,6 +12,7 @@
 #include <limits>
 #include <set>
 #include <map>
+#include <unordered_set>
 #include <sstream>
 #include <iomanip>
 #include <chrono>
@@ -667,35 +668,59 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
             continue;
         }
 
-        // Build durable reflex face keys and collect face vertices
+        // Collect unique vertices from reflex faces and build vertex index mapping
         auto keysStart = Clock::now();
-        std::set<std::string> durableReflexFaceKeys;
         std::vector<vec3> uniqueFaceVertices;
-        std::set<std::string> addedVerts;
+        std::map<uint32_t, uint32_t> origToNewIdx; // maps original mesh vertex index to new index
 
         for (uint32_t faceIdx : reflexFaceSet) {
-            uint32_t i0 = tris[faceIdx * 3 + 0];
-            uint32_t i1 = tris[faceIdx * 3 + 1];
-            uint32_t i2 = tris[faceIdx * 3 + 2];
-
-            vec3 v0(verts[i0 * 3], verts[i0 * 3 + 1], verts[i0 * 3 + 2]);
-            vec3 v1(verts[i1 * 3], verts[i1 * 3 + 1], verts[i1 * 3 + 2]);
-            vec3 v2(verts[i2 * 3], verts[i2 * 3 + 1], verts[i2 * 3 + 2]);
-
-            durableReflexFaceKeys.insert(getDurableFaceKey(v0, v1, v2));
-
-            // Add unique vertices
-            std::string k0 = std::to_string(v0.x) + "," + std::to_string(v0.y) + "," + std::to_string(v0.z);
-            std::string k1 = std::to_string(v1.x) + "," + std::to_string(v1.y) + "," + std::to_string(v1.z);
-            std::string k2 = std::to_string(v2.x) + "," + std::to_string(v2.y) + "," + std::to_string(v2.z);
-            if (addedVerts.find(k0) == addedVerts.end()) { addedVerts.insert(k0); uniqueFaceVertices.push_back(v0); }
-            if (addedVerts.find(k1) == addedVerts.end()) { addedVerts.insert(k1); uniqueFaceVertices.push_back(v1); }
-            if (addedVerts.find(k2) == addedVerts.end()) { addedVerts.insert(k2); uniqueFaceVertices.push_back(v2); }
+            uint32_t indices[3] = {
+                tris[faceIdx * 3 + 0],
+                tris[faceIdx * 3 + 1],
+                tris[faceIdx * 3 + 2]
+            };
+            for (int k = 0; k < 3; k++) {
+                uint32_t origIdx = indices[k];
+                if (origToNewIdx.find(origIdx) == origToNewIdx.end()) {
+                    origToNewIdx[origIdx] = (uint32_t)uniqueFaceVertices.size();
+                    uniqueFaceVertices.push_back(vec3(
+                        verts[origIdx * 3],
+                        verts[origIdx * 3 + 1],
+                        verts[origIdx * 3 + 2]
+                    ));
+                }
+            }
         }
+
+        // Build reflex face set using NEW vertex indices (sorted tuple for canonical form)
+        // Use a struct for fast hashing/comparison
+        struct FaceKey {
+            uint32_t a, b, c;
+            bool operator==(const FaceKey& o) const { return a == o.a && b == o.b && c == o.c; }
+        };
+        struct FaceKeyHash {
+            size_t operator()(const FaceKey& f) const {
+                return std::hash<uint64_t>()((uint64_t)f.a | ((uint64_t)f.b << 21) | ((uint64_t)f.c << 42));
+            }
+        };
+        std::unordered_set<FaceKey, FaceKeyHash> reflexFaceKeys;
+
+        for (uint32_t faceIdx : reflexFaceSet) {
+            uint32_t i0 = origToNewIdx[tris[faceIdx * 3 + 0]];
+            uint32_t i1 = origToNewIdx[tris[faceIdx * 3 + 1]];
+            uint32_t i2 = origToNewIdx[tris[faceIdx * 3 + 2]];
+            // Sort indices for canonical form
+            if (i0 > i1) std::swap(i0, i1);
+            if (i1 > i2) std::swap(i1, i2);
+            if (i0 > i1) std::swap(i0, i1);
+            reflexFaceKeys.insert({i0, i1, i2});
+        }
+
         auto keysEnd = Clock::now();
         std::cout << indent << "  [Build face keys] "
                   << std::chrono::duration<double, std::milli>(keysEnd - keysStart).count() << " ms"
-                  << " (" << uniqueFaceVertices.size() << " unique vertices)" << std::endl;
+                  << " (" << uniqueFaceVertices.size() << " unique vertices, "
+                  << reflexFaceKeys.size() << " reflex face keys)" << std::endl;
 
         if (uniqueFaceVertices.empty()) {
             outputs.push_back(curShape);
@@ -722,8 +747,9 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
         minBounds.x -= 0.1; minBounds.y -= 0.1; minBounds.z -= 0.1;
         maxBounds.x += 0.1; maxBounds.y += 0.1; maxBounds.z += 0.1;
 
-        // Add cube corners
+        // Add cube corners (these get indices >= uniqueFaceVertices.size())
         std::vector<vec3> tetVertices = uniqueFaceVertices;
+        size_t numReflexVerts = uniqueFaceVertices.size();
         tetVertices.push_back(vec3(minBounds.x, minBounds.y, minBounds.z));
         tetVertices.push_back(vec3(maxBounds.x, minBounds.y, minBounds.z));
         tetVertices.push_back(vec3(minBounds.x, maxBounds.y, minBounds.z));
@@ -743,63 +769,96 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
 
         // Tetrahedralize
         auto tetStart = Clock::now();
-        auto tetIndices = createTets(tetVertsFlat.data(), tetVertices.size(), 0.001);
+        auto tetIndices = createTets(tetVertsFlat.data(), tetVertices.size(), 0.0);
         auto tetEnd = Clock::now();
         std::cout << indent << "  [Tetrahedralize] "
                   << std::chrono::duration<double, std::milli>(tetEnd - tetStart).count() << " ms"
                   << " (" << tetIndices.size() << " tets from " << tetVertices.size() << " verts)" << std::endl;
 
         // Compute circumcenters for tets that share a face with reflex faces
+        // Use integer index-based lookup (much faster than string keys)
         auto circumStart = Clock::now();
-        std::map<std::string, std::pair<vec3, double>> circumcenters;
+        std::vector<std::pair<vec3, double>> circumcenterList;
+
+        // Helper lambda to check if a tet face matches a reflex face
+        auto checkFace = [&](uint32_t a, uint32_t b, uint32_t c) -> bool {
+            // Only faces using original reflex vertices (indices < numReflexVerts) can match
+            if (a >= numReflexVerts || b >= numReflexVerts || c >= numReflexVerts) return false;
+            // Sort for canonical form
+            if (a > b) std::swap(a, b);
+            if (b > c) std::swap(b, c);
+            if (a > b) std::swap(a, b);
+            return reflexFaceKeys.count({a, b, c}) > 0;
+        };
 
         for (const auto& tetIdx : tetIndices) {
-            vec3 tv0 = tetVertices[tetIdx[0]];
-            vec3 tv1 = tetVertices[tetIdx[1]];
-            vec3 tv2 = tetVertices[tetIdx[2]];
-            vec3 tv3 = tetVertices[tetIdx[3]];
+            uint32_t i0 = tetIdx[0], i1 = tetIdx[1], i2 = tetIdx[2], i3 = tetIdx[3];
 
-            // Check if tet shares a face with a reflex face
-            bool faceFound = false;
-            vec3 tetFaceVerts[4][3] = {
-                {tv1, tv2, tv3}, {tv0, tv2, tv3}, {tv0, tv1, tv3}, {tv0, tv1, tv2}
-            };
-
-            for (int f = 0; f < 4; f++) {
-                std::string key = getDurableFaceKey(tetFaceVerts[f][0], tetFaceVerts[f][1], tetFaceVerts[f][2]);
-                if (durableReflexFaceKeys.count(key) > 0) {
-                    faceFound = true;
-                    break;
-                }
-            }
+            // Check all 4 faces of the tetrahedron
+            bool faceFound = checkFace(i1, i2, i3) || checkFace(i0, i2, i3) ||
+                             checkFace(i0, i1, i3) || checkFace(i0, i1, i2);
 
             if (!faceFound) continue;
 
-            vec3 cc = getCircumCenter(tv0, tv1, tv2, tv3);
-            double r = linalg::length(cc - tv0);
-            std::ostringstream oss;
-            oss << std::setprecision(10) << cc.x << "," << cc.y << "," << cc.z;
-            circumcenters[oss.str()] = std::make_pair(cc, r);
+            vec3 cc = getCircumCenter(tetVertices[i0], tetVertices[i1], tetVertices[i2], tetVertices[i3]);
+            double r = linalg::length(cc - tetVertices[i0]);
+            circumcenterList.push_back(std::make_pair(cc, r));
         }
+
         auto circumEnd = Clock::now();
         std::cout << indent << "  [Compute circumcenters] "
                   << std::chrono::duration<double, std::milli>(circumEnd - circumStart).count() << " ms"
-                  << " (" << circumcenters.size() << " circumcenters)" << std::endl;
+                  << " (" << circumcenterList.size() << " circumcenters)" << std::endl;
 
-        if (circumcenters.empty()) {
+        if (circumcenterList.empty()) {
             outputs.push_back(curShape);
             continue;
         }
 
+        // Deduplicate circumcenters using spatial hashing
+        auto dedupeStart = Clock::now();
+        constexpr double gridScale = 1000000.0; // ~0.000001 tolerance
+        struct GridKey {
+            int64_t x, y, z;
+            bool operator==(const GridKey& o) const { return x == o.x && y == o.y && z == o.z; }
+        };
+        struct GridKeyHash {
+            size_t operator()(const GridKey& k) const {
+                return std::hash<int64_t>()(k.x) ^ (std::hash<int64_t>()(k.y) << 1) ^ (std::hash<int64_t>()(k.z) << 2);
+            }
+        };
+        std::unordered_set<GridKey, GridKeyHash> seenPositions;
+        std::vector<std::pair<vec3, double>> uniqueCircumcenters;
+
+        for (const auto& cc : circumcenterList) {
+            GridKey key{
+                (int64_t)std::round(cc.first.x * gridScale),
+                (int64_t)std::round(cc.first.y * gridScale),
+                (int64_t)std::round(cc.first.z * gridScale)
+            };
+            if (seenPositions.insert(key).second) {
+                uniqueCircumcenters.push_back(cc);
+            }
+        }
+        auto dedupeEnd = Clock::now();
+        std::cout << indent << "  [Deduplicate circumcenters] "
+                  << std::chrono::duration<double, std::milli>(dedupeEnd - dedupeStart).count() << " ms"
+                  << " (" << circumcenterList.size() << " -> " << uniqueCircumcenters.size() << ")" << std::endl;
+
         // Build points and weights arrays for Voronoi
         std::vector<double> points;
         std::vector<double> wts;
-        for (const auto& kv : circumcenters) {
-            points.push_back(kv.second.first.x);
-            points.push_back(kv.second.first.y);
-            points.push_back(kv.second.first.z);
-            wts.push_back(kv.second.second);
+        for (const auto& cc : uniqueCircumcenters) {
+            points.push_back(cc.first.x);
+            points.push_back(cc.first.y);
+            points.push_back(cc.first.z);
+            wts.push_back(cc.second);
         }
+
+        //minBounds.x += 0.6; minBounds.y += 0.6; minBounds.z += 0.6;
+        //maxBounds.x -= 0.6; maxBounds.y -= 0.6; maxBounds.z -= 0.6;
+        minBounds.x -= 10.1; minBounds.y -= 10.1; minBounds.z -= 10.1;
+        maxBounds.x += 10.1; maxBounds.y += 10.1; maxBounds.z += 10.1;
 
         double bounds[6] = {minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, minBounds.z, maxBounds.z};
 
@@ -822,7 +881,7 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
         auto intersectStart = Clock::now();
         std::vector<manifold::Manifold> intersectedHulls;
         for (auto& hull : hulls) {
-            manifold::Manifold intersected = shape ^ hull;
+            manifold::Manifold intersected = shape ^ hull; // 
             if (!intersected.IsEmpty()) {
                 intersectedHulls.push_back(intersected);
             }
@@ -870,36 +929,36 @@ std::vector<manifold::Manifold> mmfTetrahedronConvexDecomposition(manifold::Mani
         size_t recursionCount = 0;
         for (size_t i = 0; i < finalHulls.size(); i++) {
             auto& hull = finalHulls[i];
-            manifold::MeshGL64 hullMesh = hull.GetMeshGL64();
-            size_t hNumVerts = hullMesh.vertProperties.size() / hullMesh.numProp;
-            size_t hNumTris = hullMesh.triVerts.size() / 3;
-
-            std::vector<double> hVerts;
-            for (size_t j = 0; j < hNumVerts; j++) {
-                hVerts.push_back(hullMesh.vertProperties[j * hullMesh.numProp + 0]);
-                hVerts.push_back(hullMesh.vertProperties[j * hullMesh.numProp + 1]);
-                hVerts.push_back(hullMesh.vertProperties[j * hullMesh.numProp + 2]);
-            }
-            std::vector<uint32_t> hTris;
-            for (size_t j = 0; j < hullMesh.triVerts.size(); j++) {
-                hTris.push_back((uint32_t)hullMesh.triVerts[j]);
-            }
-
-            auto hReflexFaces = getReflexFaces(hVerts.data(), hNumVerts, hTris.data(), hNumTris);
-            manifold::Manifold enforcedHull = hull.Hull();
-
-            if (!hReflexFaces.empty() && (enforcedHull.Volume() - hull.Volume() > 0.0001)) {
-                // Rotate and recurse
-                recursionCount++;
-                std::cout << indent << "  Recursing on hull " << i << " (depth " << depth + 1 << ")..." << std::endl;
-                manifold::Manifold rotated = hull.Rotate(90, 0, 0);
-                auto recursed = mmfTetrahedronConvexDecomposition(rotated, depth + 1);
-                for (auto& r : recursed) {
-                    outputs.push_back(r.Rotate(-90, 0, 0));
-                }
-            } else {
-                outputs.push_back(hull);
-            }
+            //manifold::MeshGL64 hullMesh = hull.GetMeshGL64();
+            //size_t hNumVerts = hullMesh.vertProperties.size() / hullMesh.numProp;
+            //size_t hNumTris = hullMesh.triVerts.size() / 3;
+            //
+            //std::vector<double> hVerts;
+            //for (size_t j = 0; j < hNumVerts; j++) {
+            //    hVerts.push_back(hullMesh.vertProperties[j * hullMesh.numProp + 0]);
+            //    hVerts.push_back(hullMesh.vertProperties[j * hullMesh.numProp + 1]);
+            //    hVerts.push_back(hullMesh.vertProperties[j * hullMesh.numProp + 2]);
+            //}
+            //std::vector<uint32_t> hTris;
+            //for (size_t j = 0; j < hullMesh.triVerts.size(); j++) {
+            //    hTris.push_back((uint32_t)hullMesh.triVerts[j]);
+            //}
+            //
+            //auto hReflexFaces = getReflexFaces(hVerts.data(), hNumVerts, hTris.data(), hNumTris);
+            //manifold::Manifold enforcedHull = hull.Hull();
+            //
+            //if (!hReflexFaces.empty() && (enforcedHull.Volume() - hull.Volume() > 0.0001)) {
+            //    // Rotate and recurse
+            //    recursionCount++;
+            //    std::cout << indent << "  Recursing on hull " << i << " (depth " << depth + 1 << ")..." << std::endl;
+            //    manifold::Manifold rotated = hull.Rotate(90, 0, 0);
+            //    auto recursed = mmfTetrahedronConvexDecomposition(rotated, depth + 1);
+            //    for (auto& r : recursed) {
+            //      outputs.push_back(r.Rotate(-90, 0, 0));
+            //    }
+            //} else {
+              outputs.push_back(hull);
+            //}
         }
         auto recurseEnd = Clock::now();
         std::cout << indent << "  [Check convexity & recurse] "

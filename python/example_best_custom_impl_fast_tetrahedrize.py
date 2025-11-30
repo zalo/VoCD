@@ -255,7 +255,9 @@ def native_convex_decomposition(fun_shape : manifold3d.Manifold) -> list[manifol
     t00 = time.perf_counter()
     output_objs = vocd.mmf_tetrahedron_convex_decomposition(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
     print(f"Native convex decomposition produced {len(output_objs)} pieces in {time.perf_counter() - t00:.4f} seconds")
-    outputs = [manifold3d.Manifold.hull_points(obj[0]) for obj in output_objs]
+    vertices_tris = [(np.array(mesh[0]), np.array(mesh[1])) for mesh in output_objs]
+    meshes = [manifold3d.Mesh(vertices_tri[0], vertices_tri[1]) for vertices_tri in vertices_tris]
+    outputs = [manifold3d.Manifold(mesh) for mesh in meshes]
     return outputs
 
 if __name__ == "__main__":
@@ -276,9 +278,10 @@ if __name__ == "__main__":
     sphere = manifold3d.Manifold.sphere(0.6, 32)
     cube   = manifold3d.Manifold.cube  ([1.0, 1.0, 1.0], True)
     fun_shape = cube - sphere
-    #fun_shape = fun_shape.rotate([15, 15, 15])
+    fun_shape = fun_shape.rotate([15, 15, 15])
 
     #fun_shape = manifold3d.Manifold.sphere(0.6, 16) + manifold3d.Manifold.sphere(0.6, 16).translate([0.3, 0.3, 0.3])
+    #fun_shape = manifold3d.Manifold.cube([1.0, 1.0, 1.0]) - manifold3d.Manifold.cube([1.0, 1.0, 1.0]).translate([0.25, 0.25, 0.25])
 
     #visualize_convex_decomposition(mmf_tetrahedron_convex_decomposition(fun_shape))
 
