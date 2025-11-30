@@ -3,13 +3,17 @@
 Example usage of the vocd module
 """
 
-import vocd
+import vocd_ext as vocd
 import manifold3d
 import trimesh
 import numpy as np
 from random import random
 import time
+import tqdm
+import triangle as tr
 np.set_printoptions(precision=4, suppress=True)
+import matplotlib.pyplot as plt
+import tetrahedralize
 
 rand_color = [random(), random(), random()]
 def explode(convex_pieces, explode_amount = 1.05, debug_shapes = None):
@@ -94,6 +98,7 @@ def visualize_tetrahedra(tet_vertices, tet_indices):
 
 def dot2(v):
     return np.dot(v, v)
+
 def distance_to_triangle(v1, v2, v3, p ):
     v21 = v2 - v1
     p1  =  p - v1
@@ -156,6 +161,7 @@ def get_reflex_faces(verts, tris):
     return np.array(list(reflex_face_set), dtype=np.uint32)
 
 def to_trimesh(model):
+    #t0 = time.perf_counter()
     mesh = model.to_mesh()
     #print("Vert properties shape:", mesh.vert_properties.shape)
     if mesh.vert_properties.shape[1] > 3:
@@ -164,20 +170,9 @@ def to_trimesh(model):
     else:
         vertices = mesh.vert_properties
         colors   = None
-    return trimesh.Trimesh(vertices=vertices, faces=mesh.tri_verts, vertex_colors=colors)
-
-#def getCircumCenter(p0, p1, p2, p3):
-#    b = p1 - p0
-#    c = p2 - p0
-#    d = p3 - p0
-#
-#    det = 2.0 * (b[0]*(c[1]*d[2] - c[2]*d[1]) - b[1]*(c[0]*d[2] - c[2]*d[0]) + b[2]*(c[0]*d[1] - c[1]*d[0]))
-#    if det == 0.0:
-#        return p0
-#    else: 
-#        v = np.cross(c, d)*np.dot(b,b) + np.cross(d, b)*np.dot(c,c) + np.cross(b, c)*np.dot(d,d)
-#        v /= det
-#        return p0 + v
+    output_mesh = trimesh.Trimesh(vertices=vertices, faces=mesh.tri_verts, vertex_colors=colors)
+    #print("Converted to trimesh in", time.perf_counter() - t0, "seconds")
+    return output_mesh
 
 def getCircumCenter(p0, p1, p2, p3):
         e1 = p1 - p0
@@ -193,105 +188,34 @@ def getCircumCenter(p0, p1, p2, p3):
                 ]) * 2.0
         return ((a + b + c) / alpha) + p0
 
-def getTriangleCircumCenter(p0, p1, p2):
-        a = p0 - p2
-        b = p1 - p2
-        c = p0 - p1
+def triangle_circumcenter2(a, b, c):
+    ac = c - a
+    ab = b - a
+    abXac = np.cross(ab, ac)
+    #this is the vector from a TO the circumsphere center
+    aclen2 = np.dot(ac, ac)
+    ablen2 = np.dot(ab, ab)
+    abXaclen2 = np.dot(abXac, abXac)
+    toCircumsphereCenter = (np.cross(abXac, ab) * aclen2 + np.cross(ac, abXac) * ablen2) / (2.0 * abXaclen2)
+    return a  +  toCircumsphereCenter # now this is the actual 3-space location
 
-        a_length = np.linalg.norm(a)
-        b_length = np.linalg.norm(b)
-        #c_length = np.linalg.norm(c)
-
-        acrsb = np.cross(a, b)
-        numerator = np.cross(b * (a_length * a_length) - a * (b_length * b_length), acrsb)
-        crs = np.linalg.norm(acrsb)
-        denominator = 2.0 * (crs * crs)
-
-        circumcenter = numerator / denominator + p2
-        return circumcenter
+def triangle_circumcenter3(va, vb, vc):
+    a = va - vc
+    b = vb - vc
+    c = va - vb
+    a_length = np.linalg.norm(a)
+    b_length = np.linalg.norm(b)
+    c_length = np.linalg.norm(c)
+    numerator = np.cross((((a_length * a_length) * b) - ((b_length * b_length) * a)), np.cross(a, b))
+    crs = np.linalg.norm(np.cross(a, b))
+    denominator = 2.0 * (crs * crs)
+    circumcenter = (numerator / denominator) + vc
+    return circumcenter
 
 def constrain_to_segment(position, a, b):
     ba = b - a
     t = np.dot(position - a, ba) / np.dot(ba, ba)
     return a + t * (b - a) if 0 <= t <= 1 else (a if t < 0 else b)
-
-#def make_non_convex_manifold():
-#    cube   = manifold3d.Manifold.cube([1.0, 1.0, 1.0]).translate([-0.5, -0.5, -0.75])
-#    sphere = manifold3d.Manifold.sphere(0.7)
-#
-#    # Create a non-convex manifold by combining a cube and a sphere
-#    fun_shape = cube - sphere
-#
-#    trimesh_obj = to_trimesh(fun_shape)
-#    #trimesh_obj.show()
-#
-#    reflex_faces = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
-#
-#    tet_vertices, tet_indices = vocd.tetrahedrize(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
-#
-#    tet_indices  = np.array(tet_indices , dtype=np.uint32)
-#    tet_vertices = np.array(tet_vertices, dtype=np.float64)
-#
-#    # Reduce the tetrahedra to only those that share a face with a reflex face
-#    # TODO: THERE IS A FUNNY BUG HERE THAT ONLY FINDS FOUR TETRAHEDRA
-#    #       THAT SHARE A FACE WITH THE REFLEX FACES
-#    pruned_tet_indices = []
-#    for face in reflex_faces:
-#        reflex_face_vertices = trimesh_obj.vertices[trimesh_obj.faces[face]]
-#        for i in range(tet_indices.shape[0]):
-#            this_tet_vertices = tet_vertices[tet_indices[i]]
-#
-#            # Check if three of the tetrahedron's vertices are within a small distance of the reflex face edges
-#            # This is a more robust way to check for shared faces
-#            shared_vertices = 0
-#            for j in range(3):
-#                a = reflex_face_vertices[j]
-#                b = reflex_face_vertices[(j+1) % 3]
-#                for pair in [(0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3)]:
-#                    # Constrain the tetrahedron vertex to the segment defined by the face edge
-#                    constrained_vertex = constrain_to_segment(this_tet_vertices[pair[0]], a, b)
-#                    if  < 1e-4:
-#                        shared_vertices += 1
-#                        break
-#
-#            #print("Comparing tetrahedron", i, "with reflex face", face)
-#
-#            #num_shared_vertices = 0
-#            #for j in range(3):
-#            #    for k in range(4):
-#            #        if np.linalg.norm(reflex_face_vertices[j] - this_tet_vertices[k]) < 1e-4:
-#            #            num_shared_vertices += 1
-#            #            #break
-#            #if num_shared_vertices == 3:
-#            #    print(f"Tetrahedron {i} shares a face with reflex face {face}")
-#            #    pruned_tet_indices.append(tet_indices[i])
-#
-#    visualize_tetrahedra(tet_vertices, np.array(pruned_tet_indices))
-#
-#    print(tet_indices.shape, tet_vertices.shape)
-#
-#    scene_objects = [trimesh_obj, trimesh.Trimesh(vertices=trimesh_obj.vertices, faces=trimesh_obj.faces[reflex_faces], face_colors=np.array([0, 255, 0, 100], dtype=np.uint8))]
-#    #for tet in tet_indices:
-#    for i in range(len(tet_indices)):
-#        p0 = tet_vertices[tet_indices[i, 0]]
-#        p1 = tet_vertices[tet_indices[i, 1]]
-#        p2 = tet_vertices[tet_indices[i, 2]]
-#        p3 = tet_vertices[tet_indices[i, 3]]
-#
-#        # Check if tetrahedron is degenerate (coplanar)
-#        # Calculate volume using scalar triple product
-#        volume = np.abs(np.dot(p1 - p0, np.cross(p2 - p0, p3 - p0))) / 6.0
-#        if volume < 0.002:
-#            #print(f"Skipping degenerate tetrahedron at index {i} with volume {volume:.6f}")
-#            continue
-#
-#        circum_center = getCircumCenter(p0, p1, p2, p3)
-#        #print(f"Tetrahedron: Circumcenter at {circum_center} Radius1 {np.linalg.norm(p0-circum_center)} Radius2 {np.linalg.norm(p1-circum_center)} Radius3 {np.linalg.norm(p2-circum_center)} Radius4 {np.linalg.norm(p3-circum_center)}")
-#        scene_objects.append(trimesh.creation.icosphere(subdivisions=1, radius=0.05).apply_translation(circum_center))
-#
-#    # Create a trimesh scene with the non-convex manifold and tetrahedra circumcenters
-#    scene = trimesh.Scene(scene_objects)
-#    scene.show()
 
 def test_tetrahedrization():
     """Test 3D Delaunay tetrahedrization"""
@@ -335,7 +259,7 @@ def test_voronoi():
     bounds = np.array([0, 10, 0, 10, 0, 10], dtype=np.float64)  # [x_min, x_max, y_min, y_max, z_min, z_max]
     
     # Compute Voronoi cell volumes
-    cells = vocd.voronoi_3d(points, wts, bounds)
+    cells, neighbors = vocd.voronoi_3d(points, wts, bounds)
     
     print(f"Computed Voronoi cells for {points.shape} points")
     print(f"Voronoi cell hull vertices: {cells}")
@@ -364,26 +288,36 @@ def test_reflex():
     print(f"Reflex edges: {reflex_edges}")
     print()
 
-def visualize_triangle_convex_decomposition(fun_shape : manifold3d.Manifold):
+def visualize_convex_decomposition(shapes : list[manifold3d.Manifold]):
+    global t0
+    #t0 = time.perf_counter()
+
+    exploded_hulls = explode(shapes, 1.0)
+
+    trimesh_hulls = [to_trimesh(hull) for hull in exploded_hulls]
+    print(f"Convex pieces: {len(shapes)} in {time.perf_counter() - t0:.4f} seconds")
+    scene = trimesh.Scene(trimesh_hulls)
+    scene.show()
+
+def triangle_convex_decomposition(fun_shape : manifold3d.Manifold) -> list[manifold3d.Manifold]:
     """Visualize convex decomposition using reflex face circumcenters"""
-
-    #fun_shape = fun_shape.split_by_plane((0.0, 0.0, 1.0), 0.0)[0]
-
+    global t0
     t0 = time.perf_counter()
     trimesh_obj = to_trimesh(fun_shape)
 
     face_set = set()
-    reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
-    if len(reflex_edges_and_faces) > 0:
-        for edge_indices, face_indices in reflex_edges_and_faces:
-            for face_index in face_indices:
-                face_set.add(face_index)
+    #reflex_edges, reflex_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+    reflex_faces = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+    if len(reflex_faces) > 0:
+        for face_indices in reflex_faces:
+            #for face_index in face_indices:
+                face_set.add(face_indices)
         reflex_faces = np.array(list(face_set), dtype=np.uint32)
 
         circumcenters = {}
         for face_index in reflex_faces:
             face_vertices = trimesh_obj.vertices[trimesh_obj.faces[face_index]]
-            circumcenter = getTriangleCircumCenter(face_vertices[0], face_vertices[1], face_vertices[2])
+            circumcenter = triangle_circumcenter3(face_vertices[0], face_vertices[1], face_vertices[2])
             #print(f"Face {face_index} circumcenter at {circumcenter}")
             circumcenters[str(circumcenter)] = (circumcenter, np.linalg.norm(circumcenter - face_vertices[0]))
 
@@ -396,7 +330,9 @@ def visualize_triangle_convex_decomposition(fun_shape : manifold3d.Manifold):
         
         # Compute Voronoi cell volumes
         #print(points, wts, bounds)
-        cells = vocd.voronoi_3d(points, wts, bounds)
+        cells, neighbors = vocd.voronoi_3d(points, wts, bounds)
+        print(f"Voronoi Cells: {len(cells)} in {time.perf_counter() - t0:.4f} seconds")
+        print(f"Neighbors: {neighbors}")
         
         print(f"Computed Voronoi cells for {points.shape} points")
         #print(f"Voronoi cell hull vertices: {cells}")
@@ -405,27 +341,37 @@ def visualize_triangle_convex_decomposition(fun_shape : manifold3d.Manifold):
         hulls = cells_to_manifolds(cells, False)
 
         intersected_hulls = [fun_shape ^ hull for hull in hulls if not (fun_shape ^ hull).is_empty()]
-
-        exploded_hulls = explode(intersected_hulls)
+        decomposed_hulls = []
+        for hull in intersected_hulls:
+            decomposed_hulls += manifold3d.Manifold.decompose(hull)
+        recursed_hulls = []
+        for i, hull in enumerate(decomposed_hulls):
+            trimesh_obj = to_trimesh(hull)
+            #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+            reflex_faces = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+            enforced_hull = manifold3d.Manifold.hull(hull)
+            if len(reflex_faces) > 0 and enforced_hull.volume() - hull.volume() > 0.0001:
+                print("Recursing on hull", i, "with reflex edges...")
+                recursed_hulls += convex_2d_decomposition(hull)#[hull]#
+            else:
+                recursed_hulls.append(enforced_hull)
+        return recursed_hulls
     else:
-        exploded_hulls = [fun_shape]
+        return [fun_shape]
 
-    trimesh_hulls = [to_trimesh(hull) for hull in exploded_hulls]
-    print(f"Convex pieces: {len(trimesh_hulls)} in {time.perf_counter() - t0:.4f} seconds")
-    scene = trimesh.Scene(trimesh_hulls)
-    scene.show()
-
-def visualize_tetrahedron_convex_decomposition(fun_shape):
+def tetrahedron_convex_decomposition(fun_shape) -> list[manifold3d.Manifold]:
     """Visualize convex decomposition using reflex face circumcenters"""
+    global t0
     t0 = time.perf_counter()
     trimesh_obj = to_trimesh(fun_shape)
 
     face_set = set()
-    reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
-    if len(reflex_edges_and_faces) > 0:
-        for edge_indices, face_indices in reflex_edges_and_faces:
-            for face_index in face_indices:
-                face_set.add(face_index)
+    #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+    reflex_faces2 = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+    if len(reflex_faces2) > 0:
+        for face_indices in reflex_faces2:
+            #for face_index in face_indices:
+            face_set.add(face_indices)
         reflex_faces = np.array(list(face_set), dtype=np.uint32)
         face_vertices = trimesh_obj.vertices[trimesh_obj.faces[reflex_faces]]
 
@@ -474,7 +420,7 @@ def visualize_tetrahedron_convex_decomposition(fun_shape):
     
     # Compute Voronoi cell volumes
     #print(points, wts, bounds)
-    cells = vocd.voronoi_3d(points, wts, bounds)
+    cells, neighbors = vocd.voronoi_3d(points, wts, bounds)
     
     print(f"Computed Voronoi cells for {points.shape} points")
     #print(f"Voronoi cell hull vertices: {cells}")
@@ -484,60 +430,551 @@ def visualize_tetrahedron_convex_decomposition(fun_shape):
 
     intersected_hulls = [fun_shape ^ hull for hull in hulls if not (fun_shape ^ hull).is_empty()]
 
-    exploded_hulls = explode(intersected_hulls)
+    return intersected_hulls
 
-    trimesh_hulls = [to_trimesh(hull) for hull in exploded_hulls]
-    print(f"Convex pieces: {len(trimesh_hulls)} in {time.perf_counter() - t0:.4f} seconds")
-    scene = trimesh.Scene(trimesh_hulls)
-    scene.show()
+def convex_2d_decomposition(shape : manifold3d.Manifold) -> list[manifold3d.Manifold]:
+    min_vol = 0.00001
+    outputs = []
+    if shape is None:
+        print("[ERROR] SHAPE IS NONE!!!")
+        return []
+    shapes = shape.decompose()
+    if len(shapes) == 0:
+        print("[ERROR] INVALID DECOMPOSITION!!!")
+        return [shape]
+    for shape in shapes:
+        if shape is None:
+            continue
+        cur_trimesh = to_trimesh(shape)
 
-def visualize_CGAL_convex_decomposition(fun_shape : manifold3d.Manifold):
-    """Visualize convex decomposition using reflex face circumcenters"""
+        # A list of the concave start/end segments of the mesh [N, 2, 3]
+        concave_segment_indices = cur_trimesh.face_adjacency_edges[~cur_trimesh.face_adjacency_convex]
+        concave_segments = cur_trimesh.vertices[concave_segment_indices][:, :, :2]  # Drop Z for 2D processing
+        if concave_segment_indices.shape[0] == 0: # Early exit if we're convex already
+            outputs += [shape]
+            continue
 
-    #fun_shape = fun_shape.split_by_plane((0.0, 0.0, 1.0), 0.0)[0]
+        # Recreate the mapping without duplicates
+        points, point_indices = np.unique(concave_segments.reshape(-1, 2), axis=0, return_inverse=True)
+        segments = point_indices.reshape(-1, 2)
+        points = np.concatenate([points, np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])], axis=0)  # Add Outer Triangle
+        pslg = dict(vertices=points, segments=segments)
 
+        # Generate a constrained Delaunay triangulation with convex hull edges
+        t = tr.triangulate(pslg, 'pc')
+
+        #print(t)
+        ## Visualize the triangulation
+        #tr.compare(plt, pslg, t)
+        #plt.show()
+
+        # For each triangle, extrude to a prism and intersect with the original shape
+        for tri_indices in t['triangles']:
+            tri_2d = t['vertices'][tri_indices]
+            # Create a prism from the triangle
+            prism = manifold3d.CrossSection([[(tri_2d[0][0], tri_2d[0][1]),
+                                              (tri_2d[1][0], tri_2d[1][1]),
+                                              (tri_2d[2][0], tri_2d[2][1])]]).extrude(height=4.0).translate([0.0, 0.0, -2.0])
+            convex_shapes = manifold3d.Manifold.decompose(prism ^ shape)
+            for convex_shape in convex_shapes:
+                #if convex_shape.volume() > min_vol:
+                #outputs.append(manifold3d.Manifold.hull(convex_shape))
+
+                trimesh_obj = to_trimesh(convex_shape)
+                #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+                reflex_faces = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+                enforced_hull = manifold3d.Manifold.hull(convex_shape)
+                if len(reflex_faces) > 0 and enforced_hull.volume() - convex_shape.volume() > 0.0001:
+                    print("Recursing on hull with reflex edges...")
+                    #outputs += convex_2d_decomposition(convex_shape)#[hull]#
+                    rotated_hull = convex_shape.rotate([90, 0, 0])
+                    cur_recursed_hulls = convex_2d_decomposition(rotated_hull)#[hull]#
+                    for recursed_hull in cur_recursed_hulls:
+                        outputs.append(recursed_hull.rotate([-90, 0, 0]))
+                else:
+                    outputs.append(enforced_hull)
+        #return recursed_hulls
+
+    return outputs
+
+def convex_simple_2d_decomposition(shape : manifold3d.Manifold) -> list[manifold3d.Manifold]:
     t0 = time.perf_counter()
-    trimesh_obj = to_trimesh(fun_shape)
+    min_vol = 0.00001
+    outputs = []
+    if shape is None:
+        print("[ERROR] SHAPE IS NONE!!!")
+        return []
+    shapes = shape.decompose()
+    if len(shapes) == 0:
+        print("[ERROR] INVALID DECOMPOSITION!!!")
+        return [shape]
+    for shape in shapes:
+        if shape is None:
+            continue
+        cur_trimesh = to_trimesh(shape)
 
-    convex_hull_vertices = vocd.cgal_convex_decompose_mesh(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
-    print("CGAL Convex Decomposition complete", convex_hull_vertices)
+        # A list of the concave start/end segments of the mesh [N, 2, 3]
+        concave_segment_indices = cur_trimesh.face_adjacency_edges[~cur_trimesh.face_adjacency_convex]
+        concave_segments = cur_trimesh.vertices[concave_segment_indices][:, :, :2]  # Drop Z for 2D processing
+        if concave_segment_indices.shape[0] == 0: # Early exit if we're convex already
+            outputs += [shape]
+            continue
 
-    #intersected_hulls = [fun_shape ^ hull for hull in hulls if not (fun_shape ^ hull).is_empty()]
+        # Recreate the mapping without duplicates
+        points, point_indices = np.unique(concave_segments.reshape(-1, 2), axis=0, return_inverse=True)
+        points = np.concatenate([points, np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])], axis=0)  # Add Outer Triangle
+        pslg = dict(vertices=points)
 
-    #exploded_hulls = explode(intersected_hulls)
+        # Generate a constrained Delaunay triangulation with convex hull edges
+        t = tr.triangulate(pslg, 'Dc')
 
-    #trimesh_hulls = [to_trimesh(hull) for hull in exploded_hulls]
-    print(f"Convex pieces: {len(convex_hull_vertices)} in {time.perf_counter() - t0:.4f} seconds")
-    #scene = trimesh.Scene(trimesh_hulls)
-    #scene.show()
+        #print(t)
+        # Visualize the triangulation
+        #tr.compare(plt, pslg, t)
+        #plt.show()
 
+        # For each triangle, extrude to a prism and intersect with the original shape
+        for tri_indices in t['triangles']:
+            tri_2d = t['vertices'][tri_indices]
+            # Create a prism from the triangle
+            prism = manifold3d.CrossSection([[(tri_2d[0][0], tri_2d[0][1]),
+                                              (tri_2d[1][0], tri_2d[1][1]),
+                                              (tri_2d[2][0], tri_2d[2][1])]]).extrude(height=4.0).translate([0.0, 0.0, -2.0])
+            convex_shapes = manifold3d.Manifold.decompose(prism ^ shape)
+            for convex_shape in convex_shapes:
+                #if convex_shape.volume() > min_vol:
+                #outputs.append(manifold3d.Manifold.hull(convex_shape))
+
+                trimesh_obj = to_trimesh(convex_shape)
+                #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+                reflex_faces = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+                enforced_hull = manifold3d.Manifold.hull(convex_shape)
+                if len(reflex_faces) > 0 and enforced_hull.volume() - convex_shape.volume() > 0.001:
+                    print("Recursing on hull with reflex edges...")
+                    #outputs += convex_2d_decomposition(convex_shape)#[hull]#
+                    rotated_hull = convex_shape.rotate([90, 0, 0])
+                    cur_recursed_hulls = convex_simple_2d_decomposition(rotated_hull)#[hull]#
+                    for recursed_hull in cur_recursed_hulls:
+                        outputs.append(recursed_hull.rotate([-90, 0, 0]))
+                else:
+                    outputs.append(enforced_hull)
+        #return recursed_hulls
+
+    t1 = time.perf_counter()
+    print(f"convex_simple_2d_decomposition took {t1 - t0:.4f} seconds")
+    return outputs
+
+def get_durable_seg_key(seg):
+    return str(np.array(sorted(seg, key=lambda x: (str(x[0]), str(x[1])))))
+
+def convex_simple_manifold_2d_decomposition(shape : manifold3d.Manifold) -> list[manifold3d.Manifold]:
+    t0 = time.perf_counter()
+    min_vol = 0.00001
+    outputs = []
+    if shape is None:
+        print("[ERROR] SHAPE IS NONE!!!")
+        return []
+    shapes = shape.decompose()
+    if len(shapes) == 0:
+        print("[ERROR] INVALID DECOMPOSITION!!!")
+        return [shape]
+    for shape in shapes:
+        if shape is None:
+            continue
+        cur_trimesh = to_trimesh(shape)
+
+        # A list of the concave start/end segments of the mesh [N, 2, 3]
+        concave_segment_indices = cur_trimesh.face_adjacency_edges[~cur_trimesh.face_adjacency_convex]
+        concave_segments = cur_trimesh.vertices[concave_segment_indices][:, :, :2]  # Drop Z for 2D processing
+        if concave_segment_indices.shape[0] == 0: # Early exit if we're convex already
+            outputs += [shape]
+            continue
+
+        print(concave_segments.tolist())
+
+        edge_set = set()
+        for seg in concave_segments:
+            edge_set.add(get_durable_seg_key(seg))
+
+        # Remove duplicates
+        points, point_indices = np.unique(concave_segments.reshape(-1, 2), axis=0, return_inverse=True)
+        points_2d = np.concatenate([points, np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])], axis=0)  # Add Bounding Square
+    
+        # Compute the lifted weighted points and delaunay triangulation via Convex Hull
+        S_norm = np.sum(points_2d ** 2, axis = 1) - 1.0 ** 2 # Swap 1.0 for point radius if desired
+        S_lifted = np.concatenate([points_2d, S_norm[:,None]], axis = 1)
+        convex_hull = manifold3d.Manifold.hull_points(S_lifted)
+        convex_trimesh = to_trimesh(convex_hull)
+
+        # Accumulate triangles with the correct winding order
+        triangles = []
+        verts_2d = convex_trimesh.vertices[:,:2]
+        for tri_indices in tqdm.tqdm(convex_trimesh.faces, desc="Processing Triangles"):
+            tri_2d = verts_2d[tri_indices]
+            # Check winding order using cross product
+            v0      = tri_2d[1] - tri_2d[0]
+            v1      = tri_2d[2] - tri_2d[0]
+            cross_z = v0[0] * v1[1] - v0[1] * v1[0]
+            if cross_z < 0:
+                # Keep only triangles that share an edge with the concave segments
+                shared_edge = True
+                for i in range(3):
+                    tri_edge = np.array([tri_2d[i], tri_2d[(i + 1) % 3]])
+                    if edge_set.__contains__(get_durable_seg_key(tri_edge)):
+                        shared_edge = True
+                        break
+                if shared_edge:
+                    triangles.append([tri_indices[0], tri_indices[1], tri_indices[2]])
+        triangles = np.array(triangles, dtype=np.int32)
+
+        # Plot triangles in matplotlib
+        print("Triangles Shape", triangles.shape)
+        #plt.triplot(convex_trimesh.vertices[:,0], convex_trimesh.vertices[:,1], triangles)
+        #plt.show()
+
+        use_voronoi = False
+
+        if not use_voronoi:
+            recursed_hulls = []
+            # For each triangle, extrude to a prism and intersect with the original shape
+            for tri_indices in triangles:
+                tri_2d = verts_2d[tri_indices]
+                # Create a prism from the triangle
+                prism = manifold3d.CrossSection([[(tri_2d[0][0], tri_2d[0][1]),
+                                                  (tri_2d[2][0], tri_2d[2][1]),
+                                                  (tri_2d[1][0], tri_2d[1][1])]]).extrude(height=4.0).translate([0.0, 0.0, -2.0])
+                decomposed_hulls = manifold3d.Manifold.decompose(prism ^ shape)
+                for i, hull in enumerate(decomposed_hulls):
+                    #trimesh_obj = to_trimesh(hull)
+                    #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+                    #reflex_faces = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+                    #enforced_hull = manifold3d.Manifold.hull(hull)
+                    #if len(reflex_faces) > 0 and enforced_hull.volume() - hull.volume() > 0.0000001:
+                    #    print("Recursing on hull", i, "with reflex edges...")
+                    #    rotated_hull = hull.rotate([90, 0, 0])
+                    #    cur_recursed_hulls = convex_simple_manifold_2d_decomposition(rotated_hull)#[hull]#
+                    #    for recursed_hull in cur_recursed_hulls:
+                    #        recursed_hulls.append(recursed_hull.rotate([-90, 0, 0]))
+                    #else:
+                    recursed_hulls.append(hull)
+            return recursed_hulls
+        else:
+            circumcenters =[]
+            circumradii = []
+            for tri_indices in triangles:
+                tri_2d = verts_2d[tri_indices]
+                #print("Before", tri_2d)
+                tri_2d = np.array([[tri_2d[0][0], tri_2d[0][1], 0.0],
+                                [tri_2d[1][0], tri_2d[1][1], 0.0],
+                                [tri_2d[2][0], tri_2d[2][1], 0.0]]) # Add Z=0 for 3D processing
+                circumcenters.append(triangle_circumcenter3(tri_2d[0], tri_2d[1], tri_2d[2]))
+                circumradii.append(np.linalg.norm(circumcenters[-1] - tri_2d[0]))
+            
+            circumcenters = np.array(circumcenters)
+            circumradii   = np.array(circumradii)
+
+            #plt.scatter(circumcenters[:, 0], circumcenters[:, 1], s=circumradii * 100)
+            #plt.show()
+
+            # Define bounds
+            bounds = np.array([-1, 1, -1, 1, -1, 1], dtype=np.float64)  # [x_min, x_max, y_min, y_max, z_min, z_max]
+            
+            # Compute Voronoi cell volumes
+            #print(circumcenters, circumradii, bounds)
+            cells, neighbors = vocd.voronoi_3d(circumcenters, circumradii, bounds)
+            print(f"Voronoi Cells: {len(cells)}")
+
+            hulls = cells_to_manifolds(cells, False)
+
+            intersected_hulls = [fun_shape ^ hull for hull in hulls if not (fun_shape ^ hull).is_empty()]
+            decomposed_hulls = []
+            for hull in intersected_hulls:
+                decomposed_hulls += manifold3d.Manifold.decompose(hull)
+            recursed_hulls = []
+            for i, hull in enumerate(decomposed_hulls):
+                trimesh_obj = to_trimesh(hull)
+                #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+                reflex_faces = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+                enforced_hull = manifold3d.Manifold.hull(hull)
+                #if len(reflex_faces) > 0 and enforced_hull.volume() - hull.volume() > 0.0000001:
+                #    print("Recursing on hull", i, "with reflex edges...")
+                #    rotated_hull = hull.rotate([90, 0, 0])
+                #    cur_recursed_hulls = convex_simple_manifold_2d_decomposition(rotated_hull)#[hull]#
+                #    for recursed_hull in cur_recursed_hulls:
+                #        recursed_hulls.append(recursed_hull.rotate([-90, 0, 0]))
+                #else:
+                recursed_hulls.append(enforced_hull)
+            return recursed_hulls
+    else:
+        return [fun_shape]
+
+def voronoi_convex_2d_decomposition(shape : manifold3d.Manifold) -> list[manifold3d.Manifold]:
+    min_vol = 0.00001
+    outputs = []
+    if shape is None:
+        print("[ERROR] SHAPE IS NONE!!!")
+        return []
+    shapes = shape.decompose()
+    if len(shapes) == 0:
+        print("[ERROR] INVALID DECOMPOSITION!!!")
+        return [shape]
+    for shape in shapes:
+        if shape is None:
+            continue
+        cur_trimesh = to_trimesh(shape)
+
+        # A list of the concave start/end segments of the mesh [N, 2, 3]
+        concave_segment_indices = cur_trimesh.face_adjacency_edges[~cur_trimesh.face_adjacency_convex]
+        concave_segments = cur_trimesh.vertices[concave_segment_indices][:, :, :2]  # Drop Z for 2D processing
+        if concave_segment_indices.shape[0] == 0: # Early exit if we're convex already
+            outputs += [shape]
+            continue
+
+        # Recreate the mapping without duplicates
+        points, point_indices = np.unique(concave_segments.reshape(-1, 2), axis=0, return_inverse=True)
+        segments = point_indices.reshape(-1, 2)
+        points = np.concatenate([points, np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])], axis=0)  # Add Outer Triangle
+        pslg = dict(vertices=points, segments=segments)
+
+        # Generate a constrained Delaunay triangulation with convex hull edges
+        t = tr.triangulate(pslg, 'cD')
+
+        #print(t)
+        # Visualize the triangulation
+        #tr.compare(plt, pslg, t)
+        #plt.show()
+
+        # For each triangle, extrude to a prism and intersect with the original shape
+        circumcenters =[]
+        circumradii = []
+        for tri_indices in t['triangles']:
+            tri_2d = t['vertices'][tri_indices]
+            #print("Before", tri_2d)
+            tri_2d = np.array([[tri_2d[0][0], tri_2d[0][1], 0.0],
+                               [tri_2d[1][0], tri_2d[1][1], 0.0],
+                               [tri_2d[2][0], tri_2d[2][1], 0.0]]) # Add Z=0 for 3D processing
+            #print("After", tri_2d)
+
+            # TODO: Only take triangles with at least one edge on a concave segment
+
+            circumcenters.append(triangle_circumcenter3(tri_2d[0], tri_2d[1], tri_2d[2]))
+            circumradii.append(np.linalg.norm(circumcenters[-1] - tri_2d[0]))
+        
+        circumcenters = np.array(circumcenters)
+        circumradii   = np.array(circumradii)
+
+        #plt.scatter(circumcenters[:, 0], circumcenters[:, 1], s=circumradii * 100)
+        #plt.show()
+
+        # Define bounds
+        bounds = np.array([-1, 1, -1, 1, -1, 1], dtype=np.float64)  # [x_min, x_max, y_min, y_max, z_min, z_max]
+        
+        # Compute Voronoi cell volumes
+        #print(circumcenters, circumradii, bounds)
+        cells, neighbors = vocd.voronoi_3d(circumcenters, circumradii, bounds)
+        print(f"Voronoi Cells: {len(cells)}")
+
+        hulls = cells_to_manifolds(cells, False)
+
+        intersected_hulls = [fun_shape ^ hull for hull in hulls if not (fun_shape ^ hull).is_empty()]
+        decomposed_hulls = []
+        for hull in intersected_hulls:
+            decomposed_hulls += manifold3d.Manifold.decompose(hull)
+        recursed_hulls = []
+        for i, hull in enumerate(decomposed_hulls):
+            trimesh_obj = to_trimesh(hull)
+            #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+            reflex_faces = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+            enforced_hull = manifold3d.Manifold.hull(hull)
+            if len(reflex_faces) > 0 and enforced_hull.volume() - hull.volume() > 0.0000001:
+                print("Recursing on hull", i, "with reflex edges...")
+                rotated_hull = hull.rotate([90, 0, 0])
+                cur_recursed_hulls = convex_2d_decomposition(rotated_hull)#[hull]#
+                for recursed_hull in cur_recursed_hulls:
+                    recursed_hulls.append(recursed_hull.rotate([-90, 0, 0]))
+            else:
+                recursed_hulls.append(enforced_hull)
+        return recursed_hulls
+    else:
+        return [fun_shape]
+
+def get_durable_face_key(face):
+    #avg = np.mean(face, axis=0)
+    return str(np.array(sorted(face, key=lambda x: (str(x[0]), str(x[1]), str(x[2])))))
+
+def mmf_tetrahedron_convex_decomposition(fun_shape : manifold3d.Manifold) -> list[manifold3d.Manifold]:
+    """Visualize convex decomposition using reflex face circumcenters"""
+    global t0
+    t0 = time.perf_counter()
+
+    min_vol = 0.00001
+    outputs = []
+    if fun_shape is None:
+        print("[ERROR] SHAPE IS NONE!!!")
+        return []
+    shapes = fun_shape.decompose()
+    if len(shapes) == 0:
+        print("[ERROR] INVALID DECOMPOSITION!!!")
+        return [fun_shape]
+    for shape in shapes:
+        if shape is None:
+            continue
+
+        trimesh_obj = to_trimesh(shape)
+
+        face_set = set()
+        durable_reflex_face_keys = set()
+        #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+        reflex_faces2 = get_reflex_faces(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+        if len(reflex_faces2) > 0:
+            for face_indices in reflex_faces2:
+                #for face_index in face_indices:
+                face_set.add(face_indices)
+            reflex_faces = np.array(list(face_set), dtype=np.uint32)
+            face_vertices = trimesh_obj.vertices[trimesh_obj.faces[reflex_faces]]
+
+            for face_index in reflex_faces:
+                face = trimesh_obj.vertices[trimesh_obj.faces[face_index]]
+                durable_reflex_face_keys.add(get_durable_face_key(face))
+
+        print(face_vertices.shape)
+
+        # Deduplicate face vertices
+        unique_face_vertices = np.unique(face_vertices.reshape(-1, 3), axis=0)
+
+        ## Add cube corners based on min/max bounds to improve tetrahedralization
+        min_bounds = np.min(unique_face_vertices, axis=0) - 0.1
+        max_bounds = np.max(unique_face_vertices, axis=0) + 0.1
+        cube_corners = np.array([[min_bounds[0], min_bounds[1], min_bounds[2]],
+                                [max_bounds[0], min_bounds[1], min_bounds[2]],
+                                [min_bounds[0], max_bounds[1], min_bounds[2]],
+                                [max_bounds[0], max_bounds[1], min_bounds[2]],
+                                [min_bounds[0], min_bounds[1], max_bounds[2]],
+                                [max_bounds[0], min_bounds[1], max_bounds[2]],
+                                [min_bounds[0], max_bounds[1], max_bounds[2]],
+                                [max_bounds[0], max_bounds[1], max_bounds[2]]], dtype=np.float64)
+        unique_face_vertices = np.vstack([unique_face_vertices, cube_corners])
+        tet_indices = tetrahedralize.tetrahedralize(unique_face_vertices, min_quality=0.0)#0.005)
+
+        tet_indices  = np.array(tet_indices , dtype=np.uint32)
+        tet_vertices = np.array(unique_face_vertices, dtype=np.float64)
+
+        circumcenters = {}
+        for tetrahedron_indices in tqdm.tqdm(tet_indices, desc="Pruning non-reflex tetrahedra"):
+            tetrahedron_vertices = tet_vertices[tetrahedron_indices]
+
+            # Keep tetrahedron if it shares a face  with a reflex face
+            face_found = False
+            for i in range(4):
+                tet_face = np.array([tetrahedron_vertices[j] for j in range(4) if j != i])
+                if durable_reflex_face_keys.__contains__(get_durable_face_key(tet_face)):
+                    face_found = True
+                    break
+            if not face_found:
+                continue
+
+            circumcenter = getCircumCenter(tetrahedron_vertices[0], tetrahedron_vertices[1], tetrahedron_vertices[2], tetrahedron_vertices[3])
+            #print(f"Face {face_index} circumcenter at {circumcenter}")
+            circumcenters[str(circumcenter)] = (circumcenter, np.linalg.norm(circumcenter - tetrahedron_vertices[0]))
+
+        if len(circumcenters) == 0:
+            print("No circumcenters found, returning hull of shape")
+            return [fun_shape]
+
+        # Separate into separate arrays
+        points = np.array([cc[0] for cc in circumcenters.values()])
+        wts    = np.array([cc[1] for cc in circumcenters.values()])
+        
+        # Define bounds
+        bounds = np.array([min_bounds[0], max_bounds[0], min_bounds[1], max_bounds[1], min_bounds[2], max_bounds[2]], dtype=np.float64)  # [x_min, x_max, y_min, y_max, z_min, z_max]
+        
+        print(f"Computing Voronoi for {points.shape} points...")
+
+        # Compute Voronoi cell volumes
+        #print(points, wts, bounds)
+        cells, neighbors = vocd.voronoi_3d(points, wts, bounds)
+        
+        print(f"Computed Voronoi cells for {points.shape} points")
+        #print(f"Voronoi cell hull vertices: {cells}")
+        print(f"Computed {len(cells)} Voronoi cell volumes")
+
+        hulls = cells_to_manifolds(cells, False)
+
+        intersected_hulls = [fun_shape ^ hull for hull in hulls if not (fun_shape ^ hull).is_empty()]
+
+        for i in range(3):
+            decomposed_hulls = []
+            for hull in intersected_hulls:
+                decomposed_hulls += manifold3d.Manifold.decompose(hull)
+
+            intersected_hulls = []
+            intersected_hulls = [hull.as_original().simplify(0.00000001) for hull in decomposed_hulls if not hull.is_empty()]
+
+        decomposed_hulls = []
+        for hull in intersected_hulls:
+            decomposed_hulls += manifold3d.Manifold.decompose(hull)
+
+        intersected_hulls = []
+        intersected_hulls = [hull for hull in decomposed_hulls if not hull.is_empty()]#.volume() > 0.000001]
+
+        print(f"Decomposed into {len(intersected_hulls)} hulls after intersection and decomposition")
+        outputs += intersected_hulls
+
+        #for i, hull5 in enumerate(intersected_hulls):
+        #    trimesh_obj2 = to_trimesh(hull5)
+        #    #reflex_edges_and_faces = vocd.getReflexEdges(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))
+        #    reflex_faces4 = get_reflex_faces(np.array(trimesh_obj2.vertices), np.array(trimesh_obj2.faces))
+        #    enforced_hull = manifold3d.Manifold.hull(hull5)
+        #    if len(reflex_faces4) > 0 and enforced_hull.volume() - hull5.volume() > 0.0001:
+        #        print("Recursing on hull", i, "with reflex edges...")
+        #        rotated_hull = hull5.rotate([90, 0, 0])
+        #        cur_recursed_hulls = mmf_tetrahedron_convex_decomposition(rotated_hull)#]
+        #        for recursed_hull in cur_recursed_hulls:
+        #            outputs.append(recursed_hull.rotate([-90, 0, 0]))
+        #    else:
+        #        outputs.append(manifold3d.Manifold.hull(hull5))
+    return outputs
+
+#def CGAL_convex_decomposition(fun_shape) -> list[manifold3d.Manifold]:
+#    """Visualize convex decomposition using CGAL"""
+#    trimesh_obj = to_trimesh(fun_shape)
+#    return [manifold3d.Manifold.hull_points(np.array(vertices).reshape(-1, 3)) for vertices in 
+#             vocd.cgal_convex_decompose_mesh(np.array(trimesh_obj.vertices), np.array(trimesh_obj.faces))]
 
 if __name__ == "__main__":
     print(f"Geometry Tools version: {vocd.__version__}")
     print()
     
-    #test_tetrahedrization()
-    #test_manifold()
-    #test_voronoi()
-    #make_non_convex_manifold()
-    #print(vocd)
-    #test_reflex()
-    
-    cube  = manifold3d.Manifold.cube([1.0, 1.0, 1.0], True)
-    cube2 = manifold3d.Manifold.sphere(1.0, 32)
-    # Create a non-convex manifold by combining a cube and a sphere
+    #cube  = manifold3d.Manifold.cube([1.0, 1.0, 1.0], True)
+    #cube2 = manifold3d.Manifold.sphere(1.0, 32)
     #fun_shape = (cube - cube2.translate([-0.5, -0.5, -0.5])) - cube2.translate([-0.5, 0.5, -0.5])
-    fun_shape  = manifold3d.Manifold.cube([1.0, 1.0, 0.5], True)
-    for i in range(5):
-        fun_shape = fun_shape - manifold3d.Manifold.cube([1.2, 0.5, 0.5], True).rotate([45, 0, 0]).translate([0, i * 0.15 - 0.25, -0.55])
-    fun_shape = fun_shape.rotate([0, 180, 90])
-    for i in range(5):
-        fun_shape = fun_shape - manifold3d.Manifold.cube([1.2, 0.5, 0.5], True).rotate([45, 0, 0]).translate([0, i * 0.15 - 0.25, -0.55])
+    #fun_shape  = manifold3d.Manifold.cube([1.0, 1.0, 0.5], True)
+    #for i in range(5):
+    #    fun_shape = fun_shape - manifold3d.Manifold.cube([1.2, 0.5, 0.5], True).rotate([45, 0, 0]).translate([0, i * 0.15 - 0.25, -0.55])
+    #fun_shape = fun_shape.rotate([0, 180, 90])
+    #for i in range(5):
+    #    fun_shape = fun_shape - manifold3d.Manifold.cube([1.2, 0.5, 0.5], True).rotate([45, 0, 0]).translate([0, i * 0.15 - 0.25, -0.55])
 
-    visualize_triangle_convex_decomposition(fun_shape)
+    sphere = manifold3d.Manifold.sphere(0.6, 16)
+    cube   = manifold3d.Manifold.cube  ([1.0, 1.0, 1.0], True)
+    fun_shape = cube - sphere
+    #fun_shape = fun_shape.rotate([15, 15, 15])
 
-    #visualize_tetrahedron_convex_decomposition(fun_shape)
+    #fun_shape = manifold3d.Manifold.sphere(0.6, 16) + manifold3d.Manifold.sphere(0.6, 16).translate([0.3, 0.3, 0.3])
 
+    #visualize_convex_decomposition(triangle_convex_decomposition(fun_shape))
+
+    #visualize_convex_decomposition(tetrahedron_convex_decomposition(fun_shape))
+    visualize_convex_decomposition(mmf_tetrahedron_convex_decomposition(fun_shape))
+
+    ##fun_shape = fun_shape.rotate([0, 90, 0])
+
+    #visualize_convex_decomposition(CGAL_convex_decomposition(fun_shape))
+
+    #visualize_convex_decomposition(convex_2d_decomposition(fun_shape))
+    #visualize_convex_decomposition(convex_simple_2d_decomposition(fun_shape))
+    #visualize_convex_decomposition(convex_simple_manifold_2d_decomposition(fun_shape))
+    #visualize_convex_decomposition(voronoi_convex_2d_decomposition(fun_shape))
 
     # Reddit Convex Decomposition
     # Have triangles incrementally add their non-reflex neighbors to a convex hull
